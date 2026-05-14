@@ -1,0 +1,56 @@
+{
+  "name": "Robotics Dev Environment",
+  "image": "robotics:v4",
+
+ "runArgs": [
+    "--gpus", "all",
+    "--device", "/dev/dri",
+    "--ipc=host",
+    "--net=host", // Often required for X11 forwarding to resolve local connections
+    "--volume", "/tmp/.X11-unix:/tmp/.X11-unix:rw", // Mount the X11 socket
+    "--env", "DISPLAY=${localEnv:DISPLAY}" // Pass the host's display variable
+  ],
+
+ 
+  // ── One-time setup ──────────────────────────────────────────────
+  // Ensure display utilities exist in case the base image changes.
+  "postCreateCommand": "apt-get update && apt-get install -y --no-install-recommends x11-utils mesa-utils && echo 'Setup complete'",
+
+  // ── Every-start: launch virtual display ────────────────────────
+  // "postStartCommand": "pkill Xvfb 2>/dev/null || true; rm -f /tmp/.X99-lock; Xvfb :99 -screen 0 1920x1080x24 +extension GLX +render -noreset &>/tmp/xvfb.log & sleep 1 && echo 'Xvfb running on :99'",
+
+   // ── Environment ─────────────────────────────────────────────────
+  // Remove the hardcoded :99 displays here so it inherits the host's DISPLAY
+  "containerEnv": {
+    "ENABLE_DM_CONTROL_VIEWER": "1",
+    "MUJOCO_GL": "glfw",
+    "PYOPENGL_PLATFORM": "",
+    "LIBGL_ALWAYS_SOFTWARE": "0",
+    "LIBGL_ALWAYS_INDIRECT": "0"
+  },
+
+  "remoteEnv": {
+    "DISPLAY": ":0"
+  },
+
+  // ── VS Code config ───────────────────────────────────────────────
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "python.analysis.extraPaths": [
+          "/workspace",
+          "/workspace/robosuite",
+          "/workspace/robomimic",
+          "/workspace/mimicgen"
+        ]
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.pylance"
+      ]
+    }
+  },
+  "overrideCommand": true,
+"workspaceFolder": "/workspace"
+}
