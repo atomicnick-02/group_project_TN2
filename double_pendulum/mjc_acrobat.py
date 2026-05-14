@@ -1,6 +1,36 @@
 import numpy as np
 import os
 from dm_control import suite
+import types
+
+
+# Fixed Variables
+GRAVITY = 9.81  # gravity in m/s^2
+mass = [1,1]
+length = [0.05, 0.049]
+
+l1, l2 = length
+m1, m2 = mass
+b1, b2 = damping
+mu1, mu2 = coulomb_fric
+
+PEAK_TORQUE = 0.04  # peak torque in Nm
+torque_limits = jnp.array([-PEAK_TORQUE, PEAK_TORQUE])  # torque limits in Nm
+
+
+Q = jnp.diag(jnp.array([100.0, 100.0, 1.0, 1.0]))
+Qfin =  Q
+R = jnp.diag(jnp.array([1, 1])) * 0.01
+max_torque = 0.07      # Physical Hard Stop
+# Initialize x_traj with random positions, but keep start and end fixed
+# key = jax.random.PRNGKey(42)
+key = jax.random.PRNGKey(0)
+
+
+path_prefix = os.getcwd() + "/temp_images/"
+# read tbe optimal trajectory from file
+x_ref = np.loadtxt("trajectory.csv", delimiter=",", skiprows=1).T
+u_ref = np.loadtxt("inputs.csv", delimiter=",", skiprows=1).T
 
 # ─────────────────────────────────────────────
 # Load environment
@@ -17,6 +47,27 @@ obs_spec    = env.observation_spec()
 
 print("Action spec:", action_spec)          # shape=(1,) continuous torque
 print("Obs spec:   ", obs_spec)             # orientations + velocities
+
+# ─────────────────────────────────────────────
+# Force deterministic reset to bottom position
+# ─────────────────────────────────────────────
+original_init = env.task.initialize_episode
+
+def exact_bottom_init(self, physics):
+    # Call the original initialization first to handle any internal setup
+    original_init(physics)
+    
+    # Overwrite the joint positions and velocities to be exactly zeroed/down
+    # shoulder = np.pi (straight down), elbow = 0.0 (straight)
+    physics.named.data.qpos['shoulder'] = np.pi
+    physics.named.data.qpos['elbow'] = 0.0
+    
+    # Kill any initial velocities
+    physics.named.data.qvel['shoulder'] = 0.0
+    physics.named.data.qvel['elbow'] = 0.0
+
+# Bind this custom method to the existing task instance
+env.task.initialize_episode = types.MethodType(exact_bottom_init, env.task)
 
 # ─────────────────────────────────────────────
 # Helper: flatten observation dict → numpy vector
@@ -43,21 +94,17 @@ def expert_policy(timestep):
     # orientations: [cos1, sin1, cos2, sin2]
     cos1, sin1, cos2, sin2 = obs["orientations"]
     dq1, dq2 = obs["velocity"]
-
-    # Upright = cos1 close to -1 (top), cos2 close to 1
-    # Energy pumping: apply torque in direction of velocity
-    # scaled by how far we are from upright
-    height = -(cos1 + cos2)  # max = 2 at top, min = -2 at bottom
-
-    # Switch to LQR-style damping near top
-    if height > 1.6:
-        # PD balance controller
-        theta1 = np.arctan2(sin1, cos1)   # 0 = hanging, ±π = upright
-        torque = -2.0 * (theta1 - np.pi) - 0.5 * dq1
-    else:
-        # Energy pumping
-        torque = 2.0 * np.sign(dq2) * (1.0 - height / 2.0)
-
+    Kp = 10.0e6  # Proportional gain for balance controller
+    Ki = 0.0  # Integral gain for balance controller
+    # Compute the total energy of the system
+    m1, m2 = 1.0, 1.0  # Mass
+    l1, l2 = 1.0, 1.0  # Link lengths
+    g = 9.81           # Gravity
+    # KP: swingup control based on energy difference
+    E = -m1 * g * l1 * cos1 - m2 * g * (l1 * cos1 + l2 * cos2) + 0.5 * m1 * (l1 * dq1)**2 + 0.5 * m2 * ((l1 * dq1)**2 + (l2 * dq2)**2 + 2 * l1 * l2 * dq1 * dq2 * cos2)
+    E_desired = -m1 * g * l1 - m2 * g * (l1 + l2)  # Desired energy at the upright position
+    energy_error = E - E_desired
+    torque = Kp * energy_error * np.sign(sin1 * cos2 - cos1 * sin2) + Ki * energy_error  # Add integral term for better balance
     return np.clip([torque], action_spec.minimum, action_spec.maximum)
 
 
