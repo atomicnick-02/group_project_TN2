@@ -26,7 +26,7 @@ class DoublePendulum:
 	State  : x = [q1, q2, q1_dot, q2_dot]
 	Control: u = [tau1, tau2]
 	"""
-	def __init__(self, mass=(1.0, 1.0), length=(0.05, 0.049), gravity=9.81):
+	def __init__(self, mass=(1.0, 1.0), length=(1, 1), gravity=9.81):
 		self.m1, self.m2 = mass
 		self.l1, self.l2 = length
 		self.g = gravity
@@ -210,7 +210,7 @@ def plot_results(time_span, x_traj, u_traj, output_dir="graphs"):
 
 def main():
 	# ── Problem parameters ──────────────────
-	T    = 2.0
+	T    = 5.0
 	dt   = 0.05
 	steps = int(T / dt) + 1
 	time_span = jnp.linspace(0, T, steps)
@@ -224,7 +224,7 @@ def main():
 	nx, nu = 4, 2
 
 	# ── Dynamics ────────────────────────────
-	dyn = DoublePendulum(mass=(1, 1), length=(0.05, 0.049))
+	dyn = DoublePendulum(mass=(1, 1), length=(1, 1))
 
 	# ── Initial guess ───────────────────────
 	key    = jax.random.PRNGKey(0)
@@ -263,6 +263,7 @@ def main():
 	# ── Unpack & report ──────────────────────
 	x_traj = z_opt[:steps*nx].reshape(steps, nx)
 	u_traj = z_opt[steps*nx:].reshape(steps, nu)
+	print("Number of steps:", steps)
 	print("Final state:", x_traj[-1])
 
 	# ── Save results ─────────────────────────
