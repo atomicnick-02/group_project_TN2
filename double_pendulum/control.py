@@ -64,6 +64,13 @@ def main():
     # Torque limits from MJCF/Env
     max_torque = env.action_space.high[0]
 
+    # --- PERTURBATION SETTINGS ---
+    # Apply a "push" torque for a fixed duration
+    perturb_start_time = 1.0  # seconds
+    perturb_duration = 0.2    # seconds
+    perturb_torque = np.array([0.5, 0.1]) # Nm on shoulder
+    # -----------------------------
+
     print(f"Starting simulation with TVLQR control (dt_control={dt_control}, sim_steps={sim_steps_per_control})...")
     
     # State history for plotting
@@ -108,6 +115,15 @@ def main():
             
             u_feedback = -K_gain @ error
             u_total = u_des + u_feedback
+            
+            # --- APPLY PERTURBATION ---
+            current_time = step * dt_control
+            if perturb_start_time <= current_time < (perturb_start_time + perturb_duration):
+                u_total += perturb_torque
+                if step % 2 == 0: # Avoid spamming print
+                   print(f"!!! Applying Perturbation at t={current_time:.2f}s !!!")
+            # --------------------------
+
             u_total = np.clip(u_total, -max_torque, max_torque)
 
             # Save to history
