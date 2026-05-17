@@ -19,7 +19,7 @@ g = gravity
 l1, l2 = length
 m1, m2 = mass
 
-peak_torque = 0.04
+peak_torque = 0.02
 torque_limits = jnp.array([-peak_torque, peak_torque])
 
 Q = jnp.diag(jnp.array([100.0, 100.0, 1.0, 1.0]))
@@ -218,8 +218,17 @@ def main():
     base = os.path.dirname(os.path.abspath(__file__))
     results_dir = os.path.join(base, "results")
     os.makedirs(results_dir, exist_ok=True)
+    
+    # Save trajectory for control script
     np.savetxt(os.path.join(results_dir, "trajectory.csv"), x_traj,
                delimiter=",", header="q1,q2,q1_dot,q2_dot", comments="")
+    
+    # Also save a descriptive CSV with time, angles, and velocities
+    header_full = "time,q1,q2,q1_dot,q2_dot"
+    data_full = np.column_stack([time_span, x_traj])
+    np.savetxt(os.path.join(results_dir, "optimal_trajectory_full.csv"), data_full,
+               delimiter=",", header=header_full, comments="")
+
     np.savetxt(os.path.join(results_dir, "inputs.csv"), u_traj,
                delimiter=",", header="u1,u2", comments="")
 
