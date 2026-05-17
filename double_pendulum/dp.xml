@@ -30,8 +30,8 @@
   </worldbody>
 
   <actuator>
-    <motor name="u1" joint="q1" gear="1" ctrlrange="-0.15 0.15" ctrllimited="true"/>
-    <motor name="u2" joint="q2" gear="1" ctrlrange="-0.15 0.15" ctrllimited="true"/>
+    <motor name="u1" joint="q1" gear="1" ctrlrange="-0.1 0.1" ctrllimited="true"/>
+    <motor name="u2" joint="q2" gear="1" ctrlrange="-0.1 0.1" ctrllimited="true"/>
   </actuator>
 </mujoco>
 
