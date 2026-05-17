@@ -1,0 +1,14 @@
+<worldbody>
+  <body>
+     <body name="object">
+         <!-- explicit inertia -->
+         <inertial pos="0 0 0" mass="0.1" diaginertia="0.001 0.001 0.001"/>
+
+         <!-- multiple mesh geoms... -->
+     </body>
+     <!-- semantic sites needed by robosuite placements -->
+     <site rgba="0 0 0 0" size="0.005" pos="0 0 -0.02" name="bottom_site"/>
+     <site rgba="0 0 0 0" size="0.005" pos="0 0 0.02" name="top_site"/>
+     <site rgba="0 0 0 0" size="0.005" pos="0.1 0.1 0.1" name="horizontal_radius_site"/>
+  </body>
+</worldbody>

@@ -1,4 +1,6 @@
 .vscode
 .urdf
-gripper/assets/*
+gripper/assets/ycb/*
+gripper/assets/autodesk/*
+
 __pycache__/

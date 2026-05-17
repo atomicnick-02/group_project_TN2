@@ -1,11 +1,25 @@
 This is the repo for the the group project for the course "Artificial Intelligence 2".
- 
 
-## Notes on the Tasks for A (i, ii and iii)
-Since the goal is to compare diffusion to standard behavioral cloning, we will need to train a different BC and diffusion policy for each **task**.
-The first and most basic could be the double pendulum swing-up task, which has 2 degrees of freedom and therefore can be easily visualized and understood. 
+## Notes on the docker image
+Use the **Dockerfile** to build an image with all the necessary dependencies.
+The mimicgen library suggested using the following versions:
+- python=3.8
+- robosuite=1.4.1
+- robomimic=0.3
+- mujoco==2.3.2
 
-A list of potential tasks to consider:
-- Threading (Shows the resistance to error accumulation since the thread can easily get off track)
-- Stacking (Shows the ability to recover from mistakes since the stack can easily topple)
-- Coffe prep (Shows the ability to handle long-horizon tasks with multiple steps)
+## Links for the libraries we are using
+- [Robosuite](https://robosuite.ai/) 
+- [Robomimic](https://robomimic.github.io/docs/introduction/overview.html)
+- [Mimicgen](https://mimicgen.github.io/)
+
+## Dataset
+- [Mimicgen](https://huggingface.co/datasets/amandlek/mimicgen_datasets)
+- [Dataset_Structure](https://robomimic.github.io/docs/datasets/overview.html#dataset-structure)
+
+
+## Notes on the xml wrapper
+I have implemented an xml wrapper that converting MuJoCo 1.x format tags into MuJoCo 2.x format tags.
+One of the classes in the file handles the the data loading based on the architecture of the YCB dataset and the other handles the conversion of the xml tags.
+The wrapper is located in the `xml_wrapper` folder. 
+The xml files for the custom objects are taken from the [YCB dataset](https://github.com/elpis-lab/YCB_Dataset/tree/main) and unloaded into the assets/ycb folder. 
