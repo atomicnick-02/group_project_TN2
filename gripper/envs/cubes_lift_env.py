@@ -5,7 +5,7 @@ from robosuite.models.tasks import ManipulationTask
 from robosuite.utils.placement_samplers import UniformRandomSampler
 import numpy as np
 import time
-from main_dir.src.perception import VLMPerception
+from gripper.src.perception import VLMPerception
 
 # Map RGBA -> color name used as VLM text label
 COLOR_PALETTE = {

@@ -8,8 +8,8 @@ import os
 import cv2
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from main_dir.envs.cubes_lift_env import MyCustomLiftEnv
-from main_dir.src.visualizations import vis_seg 
+from gripper.envs.cubes_lift_env import MyCustomLiftEnv
+from gripper.src.visualizations import vis_seg 
 
 controller_config = load_composite_controller_config(controller="BASIC", robot="Panda")
 

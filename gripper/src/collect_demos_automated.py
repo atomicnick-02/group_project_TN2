@@ -5,7 +5,7 @@ from robosuite.devices import Keyboard
 import sys, cv2
 
 
-from main_dir.envs.kitchen_lift_env import KitchenLiftEnv
+from gripper.envs.kitchen_lift_env import KitchenLiftEnv
 
 # ---------------------------------------------------------
 # Controller config

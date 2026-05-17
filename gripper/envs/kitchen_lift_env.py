@@ -4,7 +4,7 @@ from robosuite.models.tasks import ManipulationTask
 from robosuite.utils.placement_samplers import UniformRandomSampler
 import numpy as np
 
-from main_dir.utils.xml_wraps import YCBObject
+from gripper.utils.xml_wraps import YCBObject
 
 
 class KitchenLiftEnv(ManipulationEnv):
@@ -46,7 +46,7 @@ class KitchenLiftEnv(ManipulationEnv):
 				YCBObject(
 					object_name=name,
 					instance_name=instance_name,
-					ycb_root="main_dir/assets/ycb/",
+					ycb_root="gripper/assets/ycb/",
 				)
 			)
 		self.ycb_objects = ycb_objects

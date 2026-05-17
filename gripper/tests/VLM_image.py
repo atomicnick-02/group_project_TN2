@@ -6,7 +6,7 @@ from PIL import Image
 
 from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
 from transformers import Sam2Processor, Sam2Model
-from main_dir.src.visualizations import vis_bb, vis_seg
+from gripper.src.visualizations import vis_bb, vis_seg
 from torchvision.ops import nms
 
 # -----------------------------
@@ -259,7 +259,7 @@ def process_multiple_images(
 # -----------------------------
 if __name__ == "__main__":
     image_paths = [
-        "main_dir/data/agentview1.png",
+        "gripper/data/agentview1.png",
     ]
 
     # Try simple labels first. DINO is much better at understanding basic shapes.
@@ -278,5 +278,5 @@ if __name__ == "__main__":
         scale=1.5,
         show_bb=True,
         show_seg=True,
-        output_dir="main_dir/outputs/segmentation_results"
+        output_dir="gripper/outputs/segmentation_results"
     )

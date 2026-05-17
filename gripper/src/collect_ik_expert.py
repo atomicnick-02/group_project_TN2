@@ -6,7 +6,7 @@ import robosuite as suite
 from robosuite import load_composite_controller_config
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from main_dir.envs.kitchen_lift_env import MyCustomLiftEnv
+from gripper.envs.kitchen_lift_env import MyCustomLiftEnv
 
 
 def make_ik_controller_config():
