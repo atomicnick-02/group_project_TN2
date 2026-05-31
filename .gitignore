@@ -4,3 +4,5 @@ gripper/assets/ycb/*
 gripper/assets/autodesk/*
 
 __pycache__/
+
+*venv/
