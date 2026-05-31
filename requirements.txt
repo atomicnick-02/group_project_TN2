@@ -1,0 +1,7 @@
+mujoco >= 2.3.3
+numpy
+scipy
+jax
+mujoco-mjx
+jaxlib
+matplotlib
