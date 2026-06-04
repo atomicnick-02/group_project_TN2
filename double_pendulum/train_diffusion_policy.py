@@ -52,7 +52,7 @@ EPOCHS       = 200
 BATCH_SIZE   = 256
 LR           = 1e-4
 SEED         = 42
-HOLD_STEPS   = 30   # synthetic holding samples appended after each trajectory
+HOLD_STEPS   = 15   # synthetic holding samples appended after each trajectory
 
 # MLP-specific
 MLP_HIDDEN   = 256
@@ -124,6 +124,23 @@ class DiffusionPolicyDataset(Dataset):
                     acts = np.concatenate([acts, pad], axis=0)
 
                 self.samples.append((cond.astype(np.float32), acts.astype(np.float32)))
+
+            # Append synthetic holding samples using the trajectory's final
+            # state and final action (the IPOPT-computed stabilizing torque).
+            # This teaches the model to maintain the upright position.
+            if hold_steps > 0:
+                final_feat = states_f[-1]                        # (NX_FEAT,)
+                final_act  = actions_n[-1]                       # (nu,)
+                hold_hist  = np.repeat(final_feat[None], k, axis=0)  # (k, NX_FEAT)
+                hold_cond  = hold_hist.reshape(-1)
+                if use_goal:
+                    hold_cond = np.concatenate([hold_cond, goal_feat])
+                hold_acts = np.repeat(final_act[None], horizon, axis=0)  # (H, nu)
+                for _ in range(hold_steps):
+                    self.samples.append((
+                        hold_cond.astype(np.float32),
+                        hold_acts.astype(np.float32),
+                    ))
 
         self.cond_dim = self.samples[0][0].shape[0]
 
