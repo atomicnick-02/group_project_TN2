@@ -134,7 +134,7 @@ class TrajectoryTransformer(nn.Module):
         self.norm_out   = nn.LayerNorm(d_model)
         self.action_out = nn.Linear(d_model, action_dim)
 
-        nn.init.normal_(self.pos_embed, std=0.02)
+        nn.init.normal_(self.pos_embed, std=0.002) # small init for positional embeddings
 
     def forward(self, a_noisy: torch.Tensor, t: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         # a_noisy: (batch, H, nu)   t: (batch,)   cond: (batch, cond_dim)
@@ -194,15 +194,23 @@ class DiffusionPolicy:
         self.horizon     = horizon
         self.action_dim  = action_dim
         self.model       = network.to(device)
-        self.optimizer   = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.loss_fn     = nn.MSELoss()
-        self.loss_hist   = []
+        self.optimizer     = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+        self.loss_fn       = nn.MSELoss()
+        self._lr_scheduler = None
+        self._scaler       = torch.amp.GradScaler("cuda", enabled=(device == "cuda"))
+        self.loss_hist     = []
 
     def train(self, dataloader, epochs: int):
         """dataloader yields (cond, action_seq) batches."""
         size = len(dataloader.dataset)
+        total_steps = epochs * len(dataloader)
+        self._lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=total_steps
+        )
+        use_amp = self.device == "cuda"
         for epoch in range(epochs):
             self.model.train()
+            epoch_losses = []
             for batch, (cond, action_seq) in enumerate(dataloader):
                 cond       = cond.to(self.device)          # (batch, cond_dim)
                 action_seq = action_seq.to(self.device)    # (batch, H, nu)
@@ -211,17 +219,23 @@ class DiffusionPolicy:
                 # Only the actions are noised; cond stays clean
                 z_t, epsilon = self.scheduler.add_noise(action_seq, t)
                 t_normalized = t.float() / self.timesteps
-                epsilon_pred = self.model(z_t, t_normalized, cond)
 
-                loss = self.loss_fn(epsilon_pred, epsilon)
+                with torch.amp.autocast("cuda", enabled=use_amp):
+                    epsilon_pred = self.model(z_t, t_normalized, cond)
+                    loss = self.loss_fn(epsilon_pred, epsilon)
+
                 self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
+                self._scaler.scale(loss).backward()
+                self._scaler.step(self.optimizer)
+                self._scaler.update()
+                self._lr_scheduler.step()
+
+                epoch_losses.append(loss.item())
                 self.loss_hist.append(loss.item())
 
-                if batch % 10 == 0:
-                    current = batch * action_seq.size(0)
-                    print(f"Epoch {epoch + 1}, loss: {loss.item():>7f}  [{current:>5d}/{size:>5d}]")
+            avg_loss = sum(epoch_losses) / len(epoch_losses)
+            lr_now   = self._lr_scheduler.get_last_lr()[0]
+            print(f"Epoch {epoch + 1:>3d}/{epochs}  avg_loss={avg_loss:.5f}  lr={lr_now:.2e}")
 
     @torch.no_grad()
     def sample(self, cond: torch.Tensor):

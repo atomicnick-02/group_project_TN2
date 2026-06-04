@@ -13,9 +13,11 @@ network with no manual edits.
 Pipeline:
   1. Load expert_trajectories.h5  (groups traj_*, each with states (T,4), actions (T,2))
   2. Slice every trajectory into (cond, action_seq) windows:
-        cond       = last k states           -> (k*nx,)   [+ goal if enabled]
+        cond       = last k state features   -> (k*NX_FEAT,)  [+ NX_FEAT if USE_GOAL]
         action_seq = next H actions          -> (H, nu)
-  3. Normalize states and actions to ~[-1, 1] (stats saved for inference).
+  3. States are converted to angular features [sin(q1),cos(q1),sin(q2),cos(q2),dq1_n,dq2_n]
+     to avoid angle-wrap discontinuities. Velocities are min-max normalized to [-1,1].
+     Actions are min-max normalized to [-1,1]. Stats saved for inference.
   4. Train via the DiffusionPolicy class (noise-prediction MSE).
 """
 
@@ -38,17 +40,19 @@ OUT_DIR      = "double_pendulum/results"
 CKPT_PATH    = os.path.join(OUT_DIR, "diffusion_policy.pt")
 STATS_PATH   = os.path.join(OUT_DIR, "norm_stats.json")
 
-NX, NU       = 4, 2          # state dim, action dim
-K            = 2             # observation-history length
+NX, NU       = 4, 2          # raw state dim (from HDF5), action dim
+NX_FEAT      = 6             # feature dim: [sin(q1), cos(q1), sin(q2), cos(q2), dq1, dq2]
+K            = 6             # observation-history length
 H            = 8             # action prediction horizon
-USE_GOAL     = False         # data has a single fixed x_goal -> a constant col
-X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)
+USE_GOAL     = True          # append goal features to conditioning vector
+X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)  # upright
 
 TIMESTEPS    = 100
 EPOCHS       = 200
 BATCH_SIZE   = 256
-LR           = 1e-3
+LR           = 1e-4
 SEED         = 42
+HOLD_STEPS   = 30   # synthetic holding samples appended after each trajectory
 
 # MLP-specific
 MLP_HIDDEN   = 256
@@ -56,7 +60,7 @@ MLP_HIDDEN   = 256
 # Transformer-specific
 TF_D_MODEL   = 128
 TF_HEADS     = 4
-TF_LAYERS    = 4
+TF_LAYERS    = 3
 TF_FF        = 256
 TF_DROPOUT   = 0.0
 
@@ -67,13 +71,14 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 class DiffusionPolicyDataset(Dataset):
     """Slices expert trajectories into (cond, action_seq) windows + normalizes."""
 
-    def __init__(self, h5_path, k=K, horizon=H, nx=NX, nu=NU,
-                 use_goal=USE_GOAL, x_goal=X_GOAL):
+    def __init__(self, h5_path, k=K, horizon=H, nx=NX, nx_feat=NX_FEAT, nu=NU,
+                 use_goal=USE_GOAL, x_goal=X_GOAL, hold_steps=HOLD_STEPS):
         import h5py
 
         self.k, self.horizon = k, horizon
-        self.nx, self.nu     = nx, nu
+        self.nx, self.nx_feat, self.nu = nx, nx_feat, nu
         self.use_goal        = use_goal
+        self.hold_steps      = hold_steps
         self.x_goal          = np.asarray(x_goal, dtype=np.float32)
 
         trajs = []
@@ -86,30 +91,32 @@ class DiffusionPolicyDataset(Dataset):
         if not trajs:
             raise RuntimeError(f"No trajectories found in {h5_path}")
 
-        all_states  = np.concatenate([s for s, _ in trajs], axis=0)
+        all_vels    = np.concatenate([s[:, 2:] for s, _ in trajs], axis=0)
         all_actions = np.concatenate([a for _, a in trajs], axis=0)
-        self.state_min,  self.state_max  = all_states.min(0),  all_states.max(0)
+        self.vel_min,    self.vel_max    = all_vels.min(0),    all_vels.max(0)
         self.action_min, self.action_max = all_actions.min(0), all_actions.max(0)
-        self._state_range  = np.where((self.state_max - self.state_min) > 1e-8,
-                                      self.state_max - self.state_min, 1.0)
+        self._vel_range    = np.where((self.vel_max - self.vel_min) > 1e-8,
+                                      self.vel_max - self.vel_min, 1.0)
         self._action_range = np.where((self.action_max - self.action_min) > 1e-8,
                                       self.action_max - self.action_min, 1.0)
 
+        goal_feat = self._state_to_features(self.x_goal)      # (NX_FEAT,), computed once
+
         self.samples = []
         for states, actions in trajs:
-            states_n  = self._norm_state(states)
+            states_f  = self._state_to_features(states)       # (T, NX_FEAT)
             actions_n = self._norm_action(actions)
-            T = len(states_n)
+            T = len(states_f)
             for i in range(T):
                 lo = i - k + 1
                 if lo < 0:
-                    pad  = np.repeat(states_n[:1], -lo, axis=0)
-                    hist = np.concatenate([pad, states_n[:i + 1]], axis=0)
+                    pad  = np.repeat(states_f[:1], -lo, axis=0)
+                    hist = np.concatenate([pad, states_f[:i + 1]], axis=0)
                 else:
-                    hist = states_n[lo:i + 1]
+                    hist = states_f[lo:i + 1]
                 cond = hist.reshape(-1)
                 if use_goal:
-                    cond = np.concatenate([cond, self._norm_state(self.x_goal[None])[0]])
+                    cond = np.concatenate([cond, goal_feat])
 
                 acts = actions_n[i:i + horizon]
                 if len(acts) < horizon:
@@ -120,20 +127,30 @@ class DiffusionPolicyDataset(Dataset):
 
         self.cond_dim = self.samples[0][0].shape[0]
 
-    def _norm_state(self, x):   return 2.0 * (x - self.state_min) / self._state_range - 1.0
+    def _state_to_features(self, x):
+        """(T, 4) or (4,) -> (T, NX_FEAT) or (NX_FEAT,): sin/cos angles + normed velocities."""
+        single = x.ndim == 1
+        if single:
+            x = x[None]
+        q1, q2  = x[:, 0], x[:, 1]
+        v_norm  = 2.0 * (x[:, 2:] - self.vel_min) / self._vel_range - 1.0
+        feat    = np.column_stack([np.sin(q1), np.cos(q1), np.sin(q2), np.cos(q2), v_norm])
+        return feat[0] if single else feat
+
     def _norm_action(self, a):  return 2.0 * (a - self.action_min) / self._action_range - 1.0
     def denorm_action(self, a): return (a + 1.0) * 0.5 * self._action_range + self.action_min
 
     def save_stats(self, path):
         with open(path, "w") as fp:
             json.dump({
-                "state_min":  self.state_min.tolist(),
-                "state_max":  self.state_max.tolist(),
+                "vel_min":  self.vel_min.tolist(),
+                "vel_max":  self.vel_max.tolist(),
                 "action_min": self.action_min.tolist(),
                 "action_max": self.action_max.tolist(),
                 "k": self.k, "horizon": self.horizon,
-                "nx": self.nx, "nu": self.nu,
+                "nx": self.nx, "nx_feat": NX_FEAT, "nu": self.nu,
                 "use_goal": self.use_goal,
+                "use_angular_features": True,
                 "cond_dim": self.cond_dim,
             }, fp, indent=2)
 
@@ -167,7 +184,7 @@ def build_network(arch, cond_dim, horizon=H, action_dim=NU):
 # ── Train ────────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--arch", choices=["mlp", "transformer"], default="mlp")
+    ap.add_argument("--arch", choices=["mlp", "transformer"], default="transformer",)
     ap.add_argument("--epochs", type=int, default=EPOCHS)
     ap.add_argument("--ckpt", default=CKPT_PATH,
                     help="checkpoint output path (use distinct names per arch)")
@@ -183,7 +200,7 @@ def main():
           f"| action_seq=({H},{NU})")
 
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True,
-                        num_workers=2, drop_last=True)
+                        num_workers=2, drop_last=True, pin_memory=(DEVICE == "cuda"))
 
     scheduler = Scheduler(num_steps=TIMESTEPS, device=DEVICE)
     network, net_kwargs = build_network(args.arch, dataset.cond_dim)
@@ -205,7 +222,8 @@ def main():
             "net_kwargs": net_kwargs,
             "timesteps": TIMESTEPS, "horizon": H, "action_dim": NU,
             "cond_dim": dataset.cond_dim,
-            "k": K, "nx": NX, "use_goal": USE_GOAL,
+            "k": K, "nx": NX, "nx_feat": NX_FEAT, "use_goal": USE_GOAL,
+            "use_angular_features": True,
         },
     }, args.ckpt)
     print(f"Saved checkpoint to {args.ckpt}")

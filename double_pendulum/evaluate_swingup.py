@@ -153,17 +153,32 @@ class DiffusionController:
         self.policy.model.load_state_dict(ckpt["model_state"])
         self.policy.model.eval()
 
-        self.s_min = np.array(self.stats["state_min"],  dtype=np.float32)
-        self.s_max = np.array(self.stats["state_max"],  dtype=np.float32)
+        self.use_angular_features = self.stats.get("use_angular_features", False)
+        if self.use_angular_features:
+            self.vel_min = np.array(self.stats["vel_min"], dtype=np.float32)
+            self.vel_max = np.array(self.stats["vel_max"], dtype=np.float32)
+            self.v_rng   = np.where((self.vel_max - self.vel_min) > 1e-8,
+                                    self.vel_max - self.vel_min, 1.0)
+        else:
+            self.s_min = np.array(self.stats["state_min"], dtype=np.float32)
+            self.s_max = np.array(self.stats["state_max"], dtype=np.float32)
+            self.s_rng = np.where((self.s_max - self.s_min) > 1e-8,
+                                  self.s_max - self.s_min, 1.0)
         self.a_min = np.array(self.stats["action_min"], dtype=np.float32)
         self.a_max = np.array(self.stats["action_max"], dtype=np.float32)
-        self.s_rng = np.where((self.s_max - self.s_min) > 1e-8, self.s_max - self.s_min, 1.0)
         self.a_rng = np.where((self.a_max - self.a_min) > 1e-8, self.a_max - self.a_min, 1.0)
 
-        self._hist  = None          # rolling k-state history (normalized)
+        self._hist  = None          # rolling k-state history (features)
         self._queue = []            # remaining actions from the current chunk
 
-    def _norm_s(self, x):  return 2.0 * (x - self.s_min) / self.s_rng - 1.0
+    def _norm_s(self, x):
+        if self.use_angular_features:
+            q1, q2 = x[0], x[1]
+            v = 2.0 * (x[2:] - self.vel_min) / self.v_rng - 1.0
+            return np.array([np.sin(q1), np.cos(q1), np.sin(q2), np.cos(q2),
+                              v[0], v[1]], dtype=np.float32)
+        return 2.0 * (x - self.s_min) / self.s_rng - 1.0
+
     def _denorm_a(self, a): return (a + 1.0) * 0.5 * self.a_rng + self.a_min
 
     def reset(self, x0):
