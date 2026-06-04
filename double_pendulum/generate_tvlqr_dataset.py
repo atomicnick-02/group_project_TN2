@@ -125,7 +125,7 @@ def sample_upright_x0(rng):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n-episodes", type=int, default=300)
+    ap.add_argument("--n-episodes", type=int, default=500)
     ap.add_argument("--n-hold", type=int, default=200,
                     help="extra rollouts started perturbed around upright, to teach"
                          " the stabilizing (deviation->torque) gain")
