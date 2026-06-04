@@ -2,12 +2,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-
-# ── Noise-prediction network ────────────────────────────────────────────────────
-# Define MLP BEFORE DiffusionPolicy so it can be referenced at construction time.
-# The forward(a_noisy, t, cond) contract below is what any drop-in replacement
-# (e.g. a future Transformer) must also satisfy, so swapping architectures later
-# is a one-line change at the call site.
+# ── Noise-prediction network: MLP ───────────────────────────────────────────────
+# Define networks BEFORE DiffusionPolicy so they can be referenced at construction
+# time. The forward(a_noisy, t, cond) contract below is shared by every backbone,
+# so swapping MLP <-> TrajectoryTransformer is a one-line change at the call site.
 class MLP(nn.Module):
     """
     Flatten-everything conditional MLP.
@@ -17,7 +15,7 @@ class MLP(nn.Module):
     k-state history plus optional goal: dim = k*nx (+ nx if goal).
 
     The MLP flattens the action sequence to H*nu, so it ignores the temporal
-    structure of the action chunk -- exactly what a Transformer would exploit.
+    structure of the action chunk -- exactly what the Transformer below exploits.
     """
 
     def __init__(self, horizon: int, action_dim: int, cond_dim: int,
@@ -62,6 +60,95 @@ class MLP(nn.Module):
         return out_flat.reshape(batch, self.horizon, self.action_dim)
 
 
+# ── Sinusoidal timestep embedding (shared utility) ──────────────────────────────
+class SinusoidalTimeEmbedding(nn.Module):
+    """Standard transformer-style sinusoidal embedding of the diffusion timestep."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        # t: (batch,) normalized in [0, 1]. Scale up so frequencies are useful.
+        device = t.device
+        half   = self.dim // 2
+        freqs  = torch.exp(
+            -np.log(10000.0) * torch.arange(half, device=device).float() / max(half - 1, 1)
+        )
+        args   = t.float().unsqueeze(-1) * freqs.unsqueeze(0) * 1000.0
+        emb    = torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
+        if self.dim % 2 == 1:  # zero-pad if odd
+            emb = torch.cat([emb, torch.zeros_like(emb[:, :1])], dim=-1)
+        return emb  # (batch, dim)
+
+
+# ── Noise-prediction network: Transformer ──────────────────────────────────────
+class TrajectoryTransformer(nn.Module):
+    """
+    Conditional Transformer over the action chunk.
+
+    Unlike the MLP, this treats the H action steps as a SEQUENCE of tokens and
+    attends across them, preserving temporal structure. The diffusion timestep
+    and the conditioning vector are prepended as two extra context tokens so
+    every action token can attend to them.
+
+    Same forward(a_noisy, t, cond) contract as MLP -> drop-in replacement.
+
+    Token layout fed to the encoder:
+        [ t_token, cond_token, a_1, a_2, ..., a_H ]   length = H + 2
+    Only the H action-position outputs are projected back to nu.
+    """
+
+    def __init__(self, horizon: int, action_dim: int, cond_dim: int,
+                 d_model: int = 128, n_heads: int = 4, n_layers: int = 4,
+                 dim_feedforward: int = 256, dropout: float = 0.0):
+        super().__init__()
+        self.horizon    = horizon
+        self.action_dim = action_dim
+        self.d_model    = d_model
+
+        # Project a single action (nu,) to a token, and learn its position in the chunk.
+        self.action_in  = nn.Linear(action_dim, d_model)
+        self.pos_embed  = nn.Parameter(torch.zeros(1, horizon, d_model))
+
+        # Timestep token: sinusoidal embed -> d_model
+        self.time_embed = nn.Sequential(
+            SinusoidalTimeEmbedding(d_model),
+            nn.Linear(d_model, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model),
+        )
+
+        # Conditioning token: cond vector -> d_model
+        self.cond_embed = nn.Sequential(
+            nn.Linear(cond_dim, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model),
+        )
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=n_heads, dim_feedforward=dim_feedforward,
+            dropout=dropout, activation="gelu", batch_first=True, norm_first=True,
+        )
+        self.encoder    = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.norm_out   = nn.LayerNorm(d_model)
+        self.action_out = nn.Linear(d_model, action_dim)
+
+        nn.init.normal_(self.pos_embed, std=0.02)
+
+    def forward(self, a_noisy: torch.Tensor, t: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        # a_noisy: (batch, H, nu)   t: (batch,)   cond: (batch, cond_dim)
+        a_tok = self.action_in(a_noisy) + self.pos_embed       # (batch, H, d_model)
+        t_tok = self.time_embed(t).unsqueeze(1)                # (batch, 1, d_model)
+        c_tok = self.cond_embed(cond).unsqueeze(1)             # (batch, 1, d_model)
+
+        # Prepend the two context tokens; attention is full (no mask needed).
+        tokens = torch.cat([t_tok, c_tok, a_tok], dim=1)       # (batch, H+2, d_model)
+        out    = self.encoder(tokens)
+        out    = self.norm_out(out[:, 2:])                     # keep only action positions
+        return self.action_out(out)                            # (batch, H, nu)
+
+
 # ── Noise scheduler ──────────────────────────────────────────────────────────────
 class Scheduler:
     """Linear beta schedule with a forward-diffusion helper."""
@@ -95,6 +182,8 @@ class DiffusionPolicy:
     Training samples are (cond, action_seq):
         cond       : (batch, cond_dim)   clean state history (+ goal), NOT noised
         action_seq : (batch, H, nu)      the target the diffusion denoises toward
+
+    Backbone-agnostic: pass either MLP(...) or TrajectoryTransformer(...).
     """
 
     def __init__(self, scheduler: Scheduler, network: nn.Module, device, timesteps: int,
