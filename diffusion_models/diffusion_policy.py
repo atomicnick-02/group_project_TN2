@@ -228,7 +228,7 @@ class DiffusionPolicy:
                 self._scaler.scale(loss).backward()
                 self._scaler.step(self.optimizer)
                 self._scaler.update()
-                self._lr_scheduler.step()
+                # self._lr_scheduler.step()
 
                 epoch_losses.append(loss.item())
                 self.loss_hist.append(loss.item())
