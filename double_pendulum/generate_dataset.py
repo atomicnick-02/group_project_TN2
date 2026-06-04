@@ -105,13 +105,13 @@ def generate_dataset():
 	]
 	R_values = [0.001, 
 	0.01, 
-	# 0.1, 
+	0.1, 
 	1, 
 	10, 100]
 
 	Peak_Torques = [0.02, 
-	# 0.04, 
-	# 0.06, 
+	0.04, 
+	0.06, 
 	0.08, 
 	0.1, 
 	0.15]
@@ -123,10 +123,10 @@ def generate_dataset():
 	nx, nu = 4, 2
 	posible_x0 = [
 		jnp.array([0.0, 0.0, 0.0, 0.0]),
-		# *[jnp.array([angle, 0.0, 0.0, 0.0]) for angle in jnp.linspace(-jnp.pi, jnp.pi, 5)],
-		# *[jnp.array([0.0, angle, 0.0, 0.0]) for angle in jnp.linspace(-jnp.pi, jnp.pi, 5)],
-		# *[jnp.array([0.0, 0.0, vel, 0.0]) for vel in jnp.linspace(-2.0, 2.0, 5)],
-		# *[jnp.array([0.0, 0.0, 0.0, vel]) for vel in jnp.linspace(-2.0, 2.0, 5)],
+		*[jnp.array([angle, 0.0, 0.0, 0.0]) for angle in jnp.linspace(-jnp.pi, jnp.pi, 5)],
+		*[jnp.array([0.0, angle, 0.0, 0.0]) for angle in jnp.linspace(-jnp.pi, jnp.pi, 5)],
+		*[jnp.array([0.0, 0.0, vel, 0.0]) for vel in jnp.linspace(-2.0, 2.0, 5)],
+		*[jnp.array([0.0, 0.0, 0.0, vel]) for vel in jnp.linspace(-2.0, 2.0, 5)],
 	]
 	x0 = jnp.array([0.0, 0.0, 0.0, 0.0])
 	x_goal = jnp.array([jnp.pi, 0.0, 0.0, 0.0])
