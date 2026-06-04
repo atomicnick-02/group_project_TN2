@@ -198,7 +198,7 @@ class DiffusionController:
                 cond = np.concatenate([cond, goal_n])
             cond_t = self.torch.from_numpy(cond[None].astype(np.float32))
             with self.torch.no_grad():
-                a_seq = self.policy.sample(cond_t).cpu().numpy()[0]   # (H, nu) normalized
+                a_seq = self.policy.sample(cond_t, stochastic=False).cpu().numpy()[0]   # (H, nu) normalized
             a_seq = self._denorm_a(a_seq)
             self._queue = list(a_seq[: self.n_exec])
 
@@ -225,7 +225,8 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
         ctrl = DiffusionController(
             results_dir / ckpt,
             results_dir / "norm_stats.json",
-            n_exec=2,
+            n_exec=1,   # re-plan every step: the unstable upright hold needs tight
+                        # feedback (n_exec=2 lets the error grow ~2x between plans)
         )
         ctrl.reset(x0)
 

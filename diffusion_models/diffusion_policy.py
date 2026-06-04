@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 import torch
 import torch.nn as nn
@@ -187,7 +188,8 @@ class DiffusionPolicy:
     """
 
     def __init__(self, scheduler: Scheduler, network: nn.Module, device, timesteps: int,
-                 horizon: int, action_dim: int, learning_rate: float = 1e-3):
+                 horizon: int, action_dim: int, learning_rate: float = 1e-3,
+                 ema_decay: float = 0.999):
         self.scheduler   = scheduler
         self.device      = device
         self.timesteps   = timesteps
@@ -199,6 +201,24 @@ class DiffusionPolicy:
         self._lr_scheduler = None
         self._scaler       = torch.amp.GradScaler("cuda", enabled=(device == "cuda"))
         self.loss_hist     = []
+
+        # Exponential moving average of the weights. The EMA copy is a much
+        # smoother estimate of the trained function than the last-step weights;
+        # for control this matters because it gives a more CONSISTENT learned
+        # gain near the unstable upright equilibrium (less jitter -> can balance).
+        # Inference should use ema_model (the train script saves it as the ckpt).
+        self.ema_decay = ema_decay
+        self.ema_model = copy.deepcopy(self.model).to(device)
+        for p in self.ema_model.parameters():
+            p.requires_grad_(False)
+        self.ema_model.eval()
+
+    @torch.no_grad()
+    def _update_ema(self):
+        for pe, p in zip(self.ema_model.parameters(), self.model.parameters()):
+            pe.mul_(self.ema_decay).add_(p.detach(), alpha=1.0 - self.ema_decay)
+        for be, b in zip(self.ema_model.buffers(), self.model.buffers()):
+            be.copy_(b)
 
     def train(self, dataloader, epochs: int):
         """dataloader yields (cond, action_seq) batches."""
@@ -228,7 +248,8 @@ class DiffusionPolicy:
                 self._scaler.scale(loss).backward()
                 self._scaler.step(self.optimizer)
                 self._scaler.update()
-                # self._lr_scheduler.step()
+                self._lr_scheduler.step()    # advance cosine schedule per-step
+                self._update_ema()           # track EMA weights for inference
 
                 epoch_losses.append(loss.item())
                 self.loss_hist.append(loss.item())
@@ -238,10 +259,16 @@ class DiffusionPolicy:
             print(f"Epoch {epoch + 1:>3d}/{epochs}  avg_loss={avg_loss:.5f}  lr={lr_now:.2e}")
 
     @torch.no_grad()
-    def sample(self, cond: torch.Tensor):
+    def sample(self, cond: torch.Tensor, stochastic: bool = True):
         """
         Reverse diffusion (DDPM ancestral sampling) of one action sequence per
         conditioning vector. cond: (batch, cond_dim) -> returns (batch, H, nu).
+
+        stochastic=False drops the per-step ancestral noise (returns the posterior
+        mean each step). This sharply lowers action variance, which matters for
+        STABILIZING an unstable equilibrium (the upright hold): injected sampling
+        noise perturbs the torque and topples the pendulum. Use it for control;
+        keep it True if you actually want diverse samples.
         """
         self.model.eval()
         cond  = cond.to(self.device)
@@ -259,8 +286,8 @@ class DiffusionPolicy:
                      * self.model(a_t, t_normalized, cond)
             a_t = first - second
 
-            noise = torch.randn_like(a_t) if t > 1 else torch.zeros_like(a_t)
-            a_t  += torch.sqrt(beta_t) * noise
+            if stochastic and t > 1:
+                a_t += torch.sqrt(beta_t) * torch.randn_like(a_t)
 
         return a_t  # (batch, H, nu)
 

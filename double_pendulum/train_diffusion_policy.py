@@ -52,7 +52,11 @@ EPOCHS       = 200
 BATCH_SIZE   = 256
 LR           = 1e-4
 SEED         = 42
-HOLD_STEPS   = 15   # synthetic holding samples appended after each trajectory
+# Real upright-hold rollouts now come from generate_tvlqr_dataset.py (--n-hold),
+# which capture the deviation->corrective-torque map. The old synthetic hack just
+# repeated each trajectory's final state/action, teaching the exact fixed point
+# but NOT how to recover -- so it's disabled (0) in favor of the real data.
+HOLD_STEPS   = 0
 
 # MLP-specific
 MLP_HIDDEN   = 256
@@ -232,8 +236,11 @@ def main():
 
     # SELF-DESCRIBING checkpoint: store arch + exact net kwargs so eval can
     # rebuild the matching class with zero manual edits.
+    # Save the EMA weights as model_state -> inference uses the smoother, more
+    # consistent controller automatically (eval loads model_state unchanged).
     torch.save({
-        "model_state": policy.model.state_dict(),
+        "model_state": policy.ema_model.state_dict(),
+        "model_state_raw": policy.model.state_dict(),
         "config": {
             "arch": args.arch,
             "net_kwargs": net_kwargs,

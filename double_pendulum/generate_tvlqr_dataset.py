@@ -112,9 +112,25 @@ def sample_x0(rng):
                      rng.uniform(-1.0, 1.0), rng.uniform(-1.0, 1.0)])
 
 
+def sample_upright_x0(rng):
+    """
+    Start PERTURBED around the upright equilibrium. Rolling out the controller
+    from here records the deviation->corrective-torque map -- i.e. the stabilizing
+    gain. Without this, the policy only ever sees the exact upright fixed point
+    and never learns how to RECOVER from small deviations, so it can't balance.
+    """
+    return np.array([np.pi + rng.uniform(-0.25, 0.25), rng.uniform(-0.25, 0.25),
+                     rng.uniform(-1.0, 1.0), rng.uniform(-1.0, 1.0)])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-episodes", type=int, default=300)
+    ap.add_argument("--n-hold", type=int, default=200,
+                    help="extra rollouts started perturbed around upright, to teach"
+                         " the stabilizing (deviation->torque) gain")
+    ap.add_argument("--hold-steps", type=int, default=60,   # 60*0.05 = 3 s
+                    help="length of each upright-hold rollout")
     ap.add_argument("--episode-steps", type=int, default=120)   # 120*0.05 = 6 s
     ap.add_argument("--perturb", type=float, default=0.10,
                     help="swing-up-phase action-noise std as a fraction of max torque")
@@ -156,10 +172,29 @@ def main():
             kept += 1
             if (ep + 1) % 50 == 0:
                 print(f"  {ep+1}/{args.n_episodes} episodes, {kept} kept")
+        swing_kept = kept
+        print(f"Swing-up rollouts: {swing_kept} kept. Generating upright-hold rollouts...")
+
+        # ── Upright-hold rollouts: teach the stabilizing gain around the top. ──
+        for hp in range(args.n_hold):
+            x0 = sample_upright_x0(rng)
+            s, a, ok = rollout(env, ctrl, x0, args.hold_steps, max_tau)  # no perturb
+            if not ok:
+                continue
+            grp = f.create_group(f"traj_{kept}")
+            grp.create_dataset("states",  data=s.astype(np.float64))
+            grp.create_dataset("actions", data=a.astype(np.float64))
+            grp.attrs["x0"] = x0
+            grp.attrs["perturb"] = 0.0
+            grp.attrs["kind"] = "hold"
+            kept += 1
     env.close()
-    print(f"\nDone! Saved {kept}/{args.n_episodes} successful rollouts to {args.out}")
-    if kept:
-        print(f"~{kept * args.episode_steps} (state, action) samples for diffusion training.")
+    n_swing_samples = swing_kept * args.episode_steps
+    n_hold_samples  = (kept - swing_kept) * args.hold_steps
+    print(f"\nDone! Saved {kept} rollouts to {args.out} "
+          f"({swing_kept} swing-up + {kept - swing_kept} hold).")
+    print(f"~{n_swing_samples + n_hold_samples} (state, action) samples "
+          f"(~{n_hold_samples} from the hold regime).")
 
 
 if __name__ == "__main__":
