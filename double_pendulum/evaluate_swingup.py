@@ -35,7 +35,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from simulation import DoublePendulumEnv
+from simulation import DoublePendulumEnv, apply_coulomb_friction
 
 current_dir = Path(__file__).resolve().parent
 results_dir = current_dir / "results"
@@ -274,6 +274,9 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
 
             env.data.ctrl[:] = u
             for _ in range(n_sub):
+                # dp.xml has no frictionloss; inject the notebook's Coulomb
+                # friction (generalized force) each substep.
+                apply_coulomb_friction(env.model, env.data)
                 # Inject the viewer's mouse perturbation (Ctrl+drag) into the
                 # dynamics. launch_passive hands physics to us, so the drag is
                 # only recorded in viewer.perturb until WE apply it: this writes

@@ -40,7 +40,7 @@ import mujoco
 import h5py
 from pathlib import Path
 
-from simulation import DoublePendulumEnv
+from simulation import DoublePendulumEnv, apply_coulomb_friction
 from evaluate_swingup import TVLQRController, wrap_to_pi
 
 current_dir = Path(__file__).resolve().parent
@@ -96,6 +96,8 @@ def rollout(env, ctrl, x0, n_steps, max_tau, perturb_scale=0.0, rng=None):
 
         env.data.ctrl[:] = u_app
         for _ in range(n_sub):
+            # dp.xml has no frictionloss; inject the notebook's Coulomb friction.
+            apply_coulomb_friction(env.model, env.data)
             mujoco.mj_step(env.model, env.data)
 
         x = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
