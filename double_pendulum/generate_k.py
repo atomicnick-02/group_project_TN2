@@ -12,8 +12,10 @@ WHAT CHANGED vs the old MuJoCo-coupled version
 * Verification is done by integrating the SAME equations with RK4 and plotting
   with matplotlib, instead of replaying torques in MuJoCo.
 * The TVLQR backward Riccati recursion (linearizing the RK4 step) lives here and
-  produces K_matrix.npy. generate_tvlqr_dataset.py imports solve_trajectory(),
-  tvlqr_gains() and rollout_tvlqr() from this module to build the dataset.
+  produces K_matrix.npy. generate_tvlqr_dataset.py imports rollout_tvlqr() (plus
+  the model params P) from this module and rolls out the committed reference in
+  this same notebook model to build the Diffusion-Policy dataset -- so the expert
+  data is dynamically valid for the notebook system, not for MuJoCo's dp.xml.
 
 Manipulator equation (cloudpendulum sys-id):
     M(q) q̈ + C(q,q̇) q̇ + G(q) + F(q̇) = τ
@@ -376,7 +378,8 @@ def _K_weighted(x, ref_T, K, k=5):
 
 def rollout_tvlqr(x_ref, u_ref, K, x0, n_steps,
                   dt_control=0.05, dt_sim=None, torque_limit=None,
-                  deviation_threshold=2.0, noise_std=None, rng=None):
+                  deviation_threshold=2.0, noise_std=None, rng=None,
+                  noise_until_upright=False):
     """
     Closed-loop TVLQR rollout in the numpy/RK4 simulator.
 
@@ -386,6 +389,14 @@ def rollout_tvlqr(x_ref, u_ref, K, x0, n_steps,
     This is the controller from old_pendulum/simul.ipynb / evaluate_swingup.py.
 
     x_ref: (steps, nx)  u_ref: (steps, nu)  K: (steps-1, nu, nx)
+
+    DAgger coverage: pass noise_std + rng to inject Gaussian state noise after
+    each step, spreading the off-nominal states the controller must recover from
+    (the CLEAN commanded action is still logged as the supervised target). With
+    noise_until_upright=True the noise latches OFF once the swing-up first reaches
+    the top, so the fragile upright hold stays clean and the rollout still
+    succeeds -- we keep the noisy swing-up recovery states without losing the hold.
+
     Returns (states (n_steps, nx), actions (n_steps, nu), success).
     """
     tau = P.torque_limit if torque_limit is None else torque_limit
@@ -405,6 +416,7 @@ def rollout_tvlqr(x_ref, u_ref, K, x0, n_steps,
     current_idx = 0
     states, actions = [], []
     held = 0
+    reached = False                       # latched once we first hit upright
 
     for _ in range(n_steps):
         target = ref_T[:, current_idx].reshape(4, 1)
@@ -432,14 +444,21 @@ def rollout_tvlqr(x_ref, u_ref, K, x0, n_steps,
         for _ in range(n_sub):
             xs = rk4_step(xs, uj, dt_sim)
         x = np.array(xs, dtype=np.float64)
-        if noise_std is not None and rng is not None:
-            x = x + rng.normal(0.0, noise_std, size=4)
         x[0] = wrap_to_pi(x[0])
         x[1] = wrap_to_pi(x[1])
 
+        # Success / latch are evaluated on the CLEAN post-step state, so noise
+        # can't spuriously flip the hold check.
         ang = abs(wrap_to_pi(x[0] - np.pi)) + abs(wrap_to_pi(x[1]))
         vel = abs(x[2]) + abs(x[3])
+        reached = reached or (ang < 0.3)
         held = held + 1 if (ang < 0.2 and vel < 1.0) else 0
+
+        if noise_std is not None and rng is not None \
+                and not (noise_until_upright and reached):
+            x = x + rng.normal(0.0, noise_std, size=4)
+            x[0] = wrap_to_pi(x[0])
+            x[1] = wrap_to_pi(x[1])
 
     # Success requires the rollout to END in a sustained upright hold (the final
     # `held` counts consecutive in-tolerance steps ending at the last step), so

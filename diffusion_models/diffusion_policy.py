@@ -220,8 +220,14 @@ class DiffusionPolicy:
         for be, b in zip(self.ema_model.buffers(), self.model.buffers()):
             be.copy_(b)
 
-    def train(self, dataloader, epochs: int):
-        """dataloader yields (cond, action_seq) batches."""
+    def train(self, dataloader, epochs: int, on_epoch_end=None):
+        """
+        dataloader yields (cond, action_seq) batches.
+
+        on_epoch_end: optional callable(epoch, avg_loss) invoked after every
+        epoch (epoch is 1-indexed). Used by the train script to write periodic
+        checkpoints without interrupting the single continuous LR schedule.
+        """
         size = len(dataloader.dataset)
         total_steps = epochs * len(dataloader)
         self._lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -257,6 +263,9 @@ class DiffusionPolicy:
             avg_loss = sum(epoch_losses) / len(epoch_losses)
             lr_now   = self._lr_scheduler.get_last_lr()[0]
             print(f"Epoch {epoch + 1:>3d}/{epochs}  avg_loss={avg_loss:.5f}  lr={lr_now:.2e}")
+
+            if on_epoch_end is not None:
+                on_epoch_end(epoch + 1, avg_loss)
 
     @torch.no_grad()
     def sample(self, cond: torch.Tensor, stochastic: bool = True):

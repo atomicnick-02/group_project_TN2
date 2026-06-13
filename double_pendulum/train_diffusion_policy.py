@@ -39,6 +39,8 @@ H5_PATH      = "double_pendulum/results/expert_trajectories.h5"
 OUT_DIR      = "double_pendulum/results"
 CKPT_PATH    = os.path.join(OUT_DIR, "diffusion_policy.pt")
 STATS_PATH   = os.path.join(OUT_DIR, "norm_stats.json")
+CKPT_DIR     = os.path.join(OUT_DIR, "checkpoints")  # periodic per-epoch snapshots
+CKPT_EVERY   = 20                                    # save a checkpoint every N epochs
 
 NX, NU       = 4, 2          # raw state dim (from HDF5), action dim
 NX_FEAT      = 6             # feature dim: [sin(q1), cos(q1), sin(q2), cos(q2), dq1, dq2]
@@ -202,18 +204,47 @@ def build_network(arch, cond_dim, horizon=H, action_dim=NU):
     raise ValueError(f"unknown arch: {arch}")
 
 
+# ── Checkpoint serialization (single source of truth) ────────────────────────
+def save_checkpoint(path, policy, arch, net_kwargs, cond_dim):
+    """
+    Write a SELF-DESCRIBING checkpoint: store arch + exact net kwargs so eval can
+    rebuild the matching class with zero manual edits. Saves the EMA weights as
+    model_state -> inference uses the smoother, more consistent controller.
+
+    Used for both the periodic per-epoch snapshots and the final checkpoint, so
+    every saved file has an identical, eval-loadable format.
+    """
+    torch.save({
+        "model_state": policy.ema_model.state_dict(),
+        "model_state_raw": policy.model.state_dict(),
+        "config": {
+            "arch": arch,
+            "net_kwargs": net_kwargs,
+            "timesteps": TIMESTEPS, "horizon": H, "action_dim": NU,
+            "cond_dim": cond_dim,
+            "k": K, "nx": NX, "nx_feat": NX_FEAT, "use_goal": USE_GOAL,
+            "use_angular_features": True,
+        },
+    }, path)
+
+
 # ── Train ────────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--arch", choices=["mlp", "transformer"], default="transformer",)
     ap.add_argument("--epochs", type=int, default=EPOCHS)
     ap.add_argument("--ckpt", default=CKPT_PATH,
-                    help="checkpoint output path (use distinct names per arch)")
+                    help="final checkpoint output path (use distinct names per arch)")
+    ap.add_argument("--ckpt-dir", default=CKPT_DIR,
+                    help="folder for periodic per-epoch checkpoints")
+    ap.add_argument("--ckpt-every", type=int, default=CKPT_EVERY,
+                    help="save a checkpoint every N epochs (0 disables periodic saves)")
     args = ap.parse_args()
 
     torch.manual_seed(SEED)
     np.random.seed(SEED)
     Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
+    Path(args.ckpt_dir).mkdir(parents=True, exist_ok=True)
 
     dataset = DiffusionPolicyDataset(H5_PATH)
     dataset.save_stats(STATS_PATH)
@@ -232,24 +263,22 @@ def main():
 
     print(f"Training arch='{args.arch}' on {DEVICE} for {args.epochs} epochs "
           f"({sum(p.numel() for p in network.parameters()):,} params)...")
-    policy.train(loader, epochs=args.epochs)
+    if args.ckpt_every > 0:
+        print(f"Periodic checkpoints every {args.ckpt_every} epochs -> {args.ckpt_dir}/")
 
-    # SELF-DESCRIBING checkpoint: store arch + exact net kwargs so eval can
-    # rebuild the matching class with zero manual edits.
-    # Save the EMA weights as model_state -> inference uses the smoother, more
-    # consistent controller automatically (eval loads model_state unchanged).
-    torch.save({
-        "model_state": policy.ema_model.state_dict(),
-        "model_state_raw": policy.model.state_dict(),
-        "config": {
-            "arch": args.arch,
-            "net_kwargs": net_kwargs,
-            "timesteps": TIMESTEPS, "horizon": H, "action_dim": NU,
-            "cond_dim": dataset.cond_dim,
-            "k": K, "nx": NX, "nx_feat": NX_FEAT, "use_goal": USE_GOAL,
-            "use_angular_features": True,
-        },
-    }, args.ckpt)
+    # Save a snapshot every N epochs into the checkpoints folder. Skip the final
+    # epoch here -- it's written once below as the canonical --ckpt path.
+    def on_epoch_end(epoch, avg_loss):
+        if args.ckpt_every > 0 and epoch % args.ckpt_every == 0 and epoch != args.epochs:
+            snap = os.path.join(args.ckpt_dir, f"{args.arch}_epoch{epoch:04d}.pt")
+            save_checkpoint(snap, policy, args.arch, net_kwargs, dataset.cond_dim)
+            print(f"  ↳ checkpoint saved: {snap}")
+
+    policy.train(loader, epochs=args.epochs, on_epoch_end=on_epoch_end)
+
+    # Final checkpoint (canonical path used by eval). Same self-describing format
+    # as the periodic snapshots, written via the shared helper.
+    save_checkpoint(args.ckpt, policy, args.arch, net_kwargs, dataset.cond_dim)
     print(f"Saved checkpoint to {args.ckpt}")
 
 

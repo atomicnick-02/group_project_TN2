@@ -1,47 +1,50 @@
 """
 Generate the Diffusion-Policy training set by ROLLING OUT the working TVLQR
-swing-up controller inside the MuJoCo simulator and logging
+swing-up controller in the NOTEBOOK's double-pendulum model and logging
 (observed_state, commanded_torque) at the control rate.
 
-WHY THIS REPLACES generate_dataset.py:
-    The old generator saved the trajectory-optimizer's collocation states/actions
-    directly. Those were computed for a frictionless point-mass model that didn't
-    match dp.xml AND were dynamically infeasible at dt=0.05 -- applying the saved
-    torques in MuJoCo does NOT reproduce the saved states. A policy cloning that
-    data learns a state->action map for a simulator it is never evaluated on, so
-    it cannot swing up.
+WHICH MODEL (and why it changed):
+    The expert trajectories are generated for the SAME system the cloudpendulum
+    notebook defines -- the system-identified, distributed-inertia 2-link
+    manipulator with viscous + arctan-smoothed Coulomb friction
+    (dp_fwd_inv_dynamics/fwd_inv_dyn_student.ipynb). That model, its parameters,
+    and the RK4 integrator live in generate_k.py; we roll out through
+    generate_k.rollout_tvlqr, so every (state, action) pair is dynamically valid
+    for the notebook model BY CONSTRUCTION.
 
-    Here every (state, action) pair is produced by stepping the ACTUAL MuJoCo
-    model under a controller that provably swings up and HOLDS (verified: 265
-    consecutive in-tolerance steps from rest, 12/12 from perturbed starts). The
-    data is therefore dynamically valid by construction, and -- because we roll
-    out closed-loop from many initial conditions with action-noise perturbations
-    -- it covers the state distribution the policy will actually encounter,
-    including recovery (DAgger-style). That is what fixes the compounding-error
-    problem on this chaotic system.
+    The previous version rolled out in MuJoCo (dp.xml) instead. That is a
+    DIFFERENT plant: dp.xml specifies link inertia about the COM (MuJoCo then
+    adds the parallel-axis term) whereas the notebook uses the inertia directly
+    about the joint; dp.xml's dry friction is constraint-based `frictionloss`,
+    not the notebook's `b*qd + mu*arctan(100*qd)`; and its actuator ctrlrange is
+    0.10 Nm, not the reference's 0.07. It also imported a helper
+    (`apply_coulomb_friction`) that does not exist in simulation.py, so it could
+    not even run. Training on MuJoCo-model data would teach a policy a plant the
+    notebook never describes -- this file fixes that.
 
-DAgger detail: we apply (commanded + noise) to the sim for state coverage, but
-    LOG the clean commanded action as the supervised target. So each sample is
-    "at this (possibly off-nominal) state, the expert would command THIS torque".
+DAgger detail: on a fraction of the swing-up rollouts we inject state noise for
+    coverage of the off-nominal states the controller must recover from, but we
+    LOG the CLEAN commanded torque as the supervised target. The noise latches
+    OFF once the rollout first reaches upright (noise_until_upright=True), so the
+    fragile hold stays clean and the rollout still succeeds -- we keep the noisy
+    swing-up recovery states without sacrificing the hold.
 
 Output: results/expert_trajectories.h5 with groups traj_*, each holding
     states  (T, 4) and actions (T, 2)  -- the SAME format
     train_diffusion_policy.py already consumes, so nothing downstream changes.
 
 The controller uses the committed, working reference (trajectory.csv, inputs.csv,
-K_matrix.npy). It does NOT re-run generate_k.py (whose dt=0.05 collocation
-reference is open-loop-infeasible); a self-check aborts if the reference on disk
-no longer holds.
+K_matrix.npy) produced by generate_k.py. A self-check aborts if that reference on
+disk no longer swings up and holds in the notebook model.
 """
 
 import argparse
-import numpy as np
-import mujoco
-import h5py
 from pathlib import Path
 
-from simulation import DoublePendulumEnv, apply_coulomb_friction
-from evaluate_swingup import TVLQRController, wrap_to_pi
+import numpy as np
+import h5py
+
+from generate_k import P, rollout_tvlqr, wrap_to_pi
 
 current_dir = Path(__file__).resolve().parent
 results_dir = current_dir / "results"
@@ -50,62 +53,12 @@ X_GOAL = np.array([np.pi, 0.0, 0.0, 0.0])
 DT_CTRL = 0.05
 
 
-def _ang_vel_err(x):
-    ang = abs(wrap_to_pi(x[0] - np.pi)) + abs(wrap_to_pi(x[1]))
-    vel = abs(x[2]) + abs(x[3])
-    return ang, vel
-
-
-def rollout(env, ctrl, x0, n_steps, max_tau, perturb_scale=0.0, rng=None):
-    """
-    One closed-loop MuJoCo rollout.
-
-    Returns (states (T,4), actions (T,2), success) where `actions` are the CLEAN
-    commanded torques (supervised targets) and success means it reached and held
-    upright. The applied torque may carry exploration noise for state coverage.
-    """
-    env.reset()
-    env.data.qpos[:2] = x0[:2]
-    env.data.qvel[:2] = x0[2:]
-    mujoco.mj_forward(env.model, env.data)
-    ctrl.reset()
-
-    n_sub = max(1, int(round(DT_CTRL / env.model.opt.timestep)))
-    states, actions = [], []
-    held = 0
-    held_max = 0
-    reached = False                            # latched once we first hit upright
-    for _ in range(n_steps):
-        x = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
-        u_cmd = np.clip(np.asarray(ctrl.action(x)).ravel(), -max_tau, max_tau)
-
-        states.append(x.copy())
-        actions.append(u_cmd.copy())          # log the CLEAN command
-
-        # Perturb the APPLIED torque only during the swing-up phase: this spreads
-        # the off-nominal states the controller must recover from (DAgger-style
-        # coverage), while the fragile upright hold is left noise-free so the
-        # rollout still succeeds. Noise latches off once upright is first reached.
-        ang, _ = _ang_vel_err(x)
-        if ang < 0.3:
-            reached = True
-        u_app = u_cmd
-        if perturb_scale > 0.0 and rng is not None and not reached:
-            u_app = np.clip(u_cmd + rng.normal(0.0, perturb_scale * max_tau, u_cmd.shape),
-                            -max_tau, max_tau)
-
-        env.data.ctrl[:] = u_app
-        for _ in range(n_sub):
-            # dp.xml has no frictionloss; inject the notebook's Coulomb friction.
-            apply_coulomb_friction(env.model, env.data)
-            mujoco.mj_step(env.model, env.data)
-
-        x = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
-        ang, vel = _ang_vel_err(x)
-        held = held + 1 if (ang < 0.2 and vel < 1.0) else 0
-        held_max = max(held_max, held)
-
-    return np.array(states), np.array(actions), held_max >= 10
+def load_reference():
+    """Load the committed notebook-model TVLQR reference (built by generate_k.py)."""
+    x_ref = np.loadtxt(results_dir / "trajectory.csv", delimiter=",", skiprows=1)
+    u_ref = np.loadtxt(results_dir / "inputs.csv", delimiter=",", skiprows=1)
+    K = np.load(results_dir / "K_matrix.npy")
+    return x_ref, u_ref, K
 
 
 def sample_x0(rng):
@@ -134,63 +87,70 @@ def main():
     ap.add_argument("--hold-steps", type=int, default=60,   # 60*0.05 = 3 s
                     help="length of each upright-hold rollout")
     ap.add_argument("--episode-steps", type=int, default=120)   # 120*0.05 = 6 s
-    ap.add_argument("--perturb", type=float, default=0.10,
-                    help="swing-up-phase action-noise std as a fraction of max torque")
+    ap.add_argument("--noise-std", type=float, default=0.03,
+                    help="swing-up-phase state-noise std (DAgger coverage); latches"
+                         " off once upright is reached so the hold stays clean")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=str(results_dir / "expert_trajectories.h5"))
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    env = DoublePendulumEnv(render_mode=None, frame_skip=1)
-    max_tau = float(env.action_space.high[0])
-    ctrl = TVLQRController()                  # loads trajectory.csv/inputs.csv/K_matrix.npy
+    x_ref, u_ref, K = load_reference()
+    print(f"Notebook-model TVLQR reference loaded: x_ref{x_ref.shape}, "
+          f"u_ref{u_ref.shape}, K{K.shape}; torque_limit={P.torque_limit} Nm.")
 
-    # ── Guard: confirm the reference on disk still swings up & holds. ──
-    _, _, ok = rollout(env, ctrl, np.zeros(4), args.episode_steps, max_tau)
+    # ── Guard: confirm the reference on disk still swings up & holds in the
+    #    notebook model (generate_k.py's RK4 integrator of the notebook EOM). ──
+    _, _, ok = rollout_tvlqr(x_ref, u_ref, K, np.zeros(4), args.episode_steps)
     if not ok:
-        env.close()
         raise SystemExit(
-            "ABORT: the TVLQR reference in results/ does not hold upright.\n"
-            "       The working reference is the committed trajectory.csv + inputs.csv\n"
-            "       + K_matrix.npy. Did generate_k.py overwrite them with its coarse\n"
-            "       (open-loop-infeasible) dt=0.05 trajectory? Restore the committed\n"
-            "       versions (git checkout) before generating the dataset.")
-    print("Reference self-check: swing-up + hold OK. Generating rollouts...")
+            "ABORT: the TVLQR reference in results/ does not swing up and hold in\n"
+            "       the notebook model. The working reference is the committed\n"
+            "       trajectory.csv + inputs.csv + K_matrix.npy produced by\n"
+            "       generate_k.py. Re-run `python generate_k.py` (or restore the\n"
+            "       committed versions with git checkout) before generating data.")
+    print("Reference self-check: swing-up + hold OK in the notebook model. "
+          "Generating rollouts...")
 
     kept = 0
     with h5py.File(args.out, "w") as f:
         for ep in range(args.n_episodes):
             x0 = np.zeros(4) if ep == 0 else sample_x0(rng)
-            pert = 0.0 if ep % 4 == 0 else args.perturb   # mix clean + perturbed
-            s, a, ok = rollout(env, ctrl, x0, args.episode_steps, max_tau,
-                               perturb_scale=pert, rng=rng)
+            # Mix clean and noisy rollouts; noise latches off at the top.
+            noise = None if ep % 4 == 0 else args.noise_std
+            s, a, ok = rollout_tvlqr(
+                x_ref, u_ref, K, x0, args.episode_steps,
+                dt_control=DT_CTRL, noise_std=noise, rng=rng,
+                noise_until_upright=True)
             if not ok:
                 continue                       # keep only successful rollouts
             grp = f.create_group(f"traj_{kept}")
             grp.create_dataset("states",  data=s.astype(np.float64))
             grp.create_dataset("actions", data=a.astype(np.float64))
             grp.attrs["x0"] = x0
-            grp.attrs["perturb"] = pert
+            grp.attrs["noise_std"] = 0.0 if noise is None else noise
             kept += 1
             if (ep + 1) % 50 == 0:
                 print(f"  {ep+1}/{args.n_episodes} episodes, {kept} kept")
         swing_kept = kept
-        print(f"Swing-up rollouts: {swing_kept} kept. Generating upright-hold rollouts...")
+        print(f"Swing-up rollouts: {swing_kept} kept. "
+              "Generating upright-hold rollouts...")
 
         # ── Upright-hold rollouts: teach the stabilizing gain around the top. ──
-        for hp in range(args.n_hold):
+        for _ in range(args.n_hold):
             x0 = sample_upright_x0(rng)
-            s, a, ok = rollout(env, ctrl, x0, args.hold_steps, max_tau)  # no perturb
+            s, a, ok = rollout_tvlqr(x_ref, u_ref, K, x0, args.hold_steps,
+                                     dt_control=DT_CTRL)        # no noise
             if not ok:
                 continue
             grp = f.create_group(f"traj_{kept}")
             grp.create_dataset("states",  data=s.astype(np.float64))
             grp.create_dataset("actions", data=a.astype(np.float64))
             grp.attrs["x0"] = x0
-            grp.attrs["perturb"] = 0.0
+            grp.attrs["noise_std"] = 0.0
             grp.attrs["kind"] = "hold"
             kept += 1
-    env.close()
+
     n_swing_samples = swing_kept * args.episode_steps
     n_hold_samples  = (kept - swing_kept) * args.hold_steps
     print(f"\nDone! Saved {kept} rollouts to {args.out} "
