@@ -1,531 +1,535 @@
+"""
+Reference generator for the double-pendulum swing-up: detailed physics, direct
+collocation, and time-varying LQR (TVLQR) gains -- all in a self-contained
+numpy/JAX + matplotlib simulator (NO MuJoCo).
+
+WHAT CHANGED vs the old MuJoCo-coupled version
+-----------------------------------------------
+* The dynamics are now taken DIRECTLY from the cloudpendulum system-identified
+  model (dp_fwd_inv_dynamics/fwd_inv_dyn_student.ipynb): a distributed-inertia
+  2-link manipulator with viscous + Coulomb (arctan-smoothed) joint friction.
+  dp.xml is no longer consulted for the model.
+* Verification is done by integrating the SAME equations with RK4 and plotting
+  with matplotlib, instead of replaying torques in MuJoCo.
+* The TVLQR backward Riccati recursion (linearizing the RK4 step) lives here and
+  produces K_matrix.npy. generate_tvlqr_dataset.py imports solve_trajectory(),
+  tvlqr_gains() and rollout_tvlqr() from this module to build the dataset.
+
+Manipulator equation (cloudpendulum sys-id):
+    M(q) q̈ + C(q,q̇) q̇ + G(q) + F(q̇) = τ
+We integrate it in the project's convention where q1 = 0 is hanging DOWN (stable)
+and q1 = π is upright (the swing-up goal, x_goal = [π,0,0,0]); concretely
+    q̈ = M(q)^{-1} ( τ + G(q) - C(q,q̇) q̇ - F(q̇) ).
+The gravity term enters with a "+" here (vs the textbook "-G" on the LHS) so that
+this down=0 / up=π convention -- shared by every other file in the project and by
+the committed reference trajectory -- holds.
+"""
+
 import os
+from functools import partial
+from collections import namedtuple
+from pathlib import Path
+
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import jax
 import jax.numpy as jnp
 import cyipopt
-import mujoco
-from pathlib import Path
-from collections import namedtuple
 
 jax.config.update("jax_enable_x64", True)
 
+current_dir = Path(__file__).resolve().parent
+results_dir = current_dir / "results"
+
 
 # ─────────────────────────────────────────────
-# Model parameters: READ DIRECTLY FROM dp.xml
+# Model parameters  (cloudpendulum dp_fwd_inv_dynamics, system-identified)
 # ─────────────────────────────────────────────
-# The whole point: the trajectory optimizer below and the MuJoCo simulator used
-# for deployment must describe the SAME physical system. We pull every inertial
-# parameter from the XML, so editing dp.xml automatically updates the planner.
-#
-# The dynamics implemented below follow the cloudpendulum notebook
-#   (dp_fwd_inv_dynamics/fwd_inv_dyn_student.ipynb) STRICTLY:
-#
-#     M(q) qddot + C(q,qdot) qdot + G(q) + F(qdot) = tau          (manipulator eq.)
-#
-#   M = [[ I1 + I2 + m2 l1^2 + 2 l1 m2 r2 c2 + gr^2 Ir + Ir,  I2 + l1 m2 r2 c2 ],
-#        [ I2 + l1 m2 r2 c2,                                    I2             ]]
-#   C = [[ -2 qd2 l1 m2 r2 s2,  -qd2 l1 m2 r2 s2 ],
-#        [  qd1 l1 m2 r2 s2,     0               ]]
-#   G = [ -g m1 r1 s1 - g m2 (l1 s1 + r2 s12),  -g m2 r2 s12 ]
-#   F = [ b1 qd1 + mu1 atan(100 qd1),  b2 qd2 + mu2 atan(100 qd2) ]
-#
-#   where c2=cos q2, s2=sin q2, s1=sin q1, s12=sin(q1+q2), r1=lc1, r2=lc2.
-#
-# Notebook<->XML reconciliation (validated against MuJoCo's mj_fullM, see below):
-#   * The notebook's link inertias I1, I2 are taken about the JOINT, whereas the
-#     MJCF <inertial> diaginertia is about the COM. We convert with the parallel-
-#     axis theorem  I_joint = I_com + m*lc^2  when loading, so that M(q) reproduces
-#     MuJoCo's mj_fullM exactly (machine precision at every q2).
-#   * Ir (rotor inertia) and gr (gear ratio) come from the joint armature and the
-#     actuator gear; with armature=0, gear=1 the rotor term gr^2 Ir + Ir is zero.
-#   * G is written for the dp.xml convention q1=0 -> hanging down (stable),
-#     q1=pi -> upright (goal). It enters the forward dynamics as +G, which
-#     reproduces MuJoCo's gravity torque exactly (the notebook's bare q=0=up frame
-#     would flip this sign).
-
-XML_PATH = Path(__file__).resolve().parent / "dp.xml"
-
-# Coulomb (dry) friction coefficients. These are kept OUTSIDE the MJCF (dp.xml has
-# no frictionloss) and applied in code via the notebook's Coulomb model so that
-# the analytic planner and the MuJoCo replay share one friction model. Values are
-# the cloudpendulum notebook's coulomb_fric = [mu1, mu2].
-COULOMB_FRICTION = (0.00305, 0.0007777)
-
-# Smooth Coulomb model from the notebook:  F_coulomb = mu * arctan(K * qdot).
-# arctan saturates the friction torque at +-mu*pi/2 while staying differentiable,
-# so it is compatible with gradient-based collocation. K=100 matches the notebook.
-ARCTAN_K = 100.0
-
+# l*  : link length            lc* : centre-of-mass distance from the joint
+# I*  : link inertia about the joint axis (as used directly in M, per the repo)
+# b*  : viscous damping         mu* : Coulomb friction coefficient
+# gr* : motor gear ratio        Ir  : rotor inertia (no value in the notebook ->
+#                                     defaults to 0; the gr²·Ir + Ir reflected
+#                                     rotor-inertia term in M[0,0] is then inert).
 ModelParams = namedtuple(
     "ModelParams",
-    "m1 m2 lc1 lc2 l1 I1 I2 b1 b2 f1 f2 gr Ir g tau1 tau2",
+    "m1 m2 l1 l2 lc1 lc2 I1 I2 b1 b2 mu1 mu2 g gr1 gr2 Ir torque_limit",
 )
 
+P = ModelParams(
+    m1=0.10548177618443695,
+    m2=0.07619744360415454,
+    l1=0.05,
+    l2=0.05,
+    lc1=0.05,
+    lc2=0.03670036749567022,
+    I1=0.00046166221821039165,
+    I2=0.00023702395072092597,
+    b1=7.634058385430087e-12,
+    b2=0.0005106535523065844,
+    mu1=0.00305,
+    mu2=0.0007777,
+    g=9.81,
+    gr1=403.0,
+    gr2=379.0,
+    Ir=0.0,                 # rotor inertia: not provided by the notebook
+    torque_limit=0.07,      # hard actuator limit [Nm] (old_pendulum/simul.ipynb)
+)
 
-def load_params(xml_path=XML_PATH):
-    """Extract the planar 2-link dynamics parameters straight from the MJCF.
+# arctan(FRICTION_SCALE · q̇) is the smooth sign(q̇) used for Coulomb friction.
+# Larger -> closer to dry friction but stiffer for the collocation solver.
+FRICTION_SCALE = 100.0
 
-    Inertias are returned about the JOINT (parallel-axis), matching the
-    notebook's M(q) convention and MuJoCo's mj_fullM.
-    """
-    m = mujoco.MjModel.from_xml_path(str(xml_path))
-    b1_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "link1")
-    b2_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "link2")
+X_GOAL = jnp.array([jnp.pi, 0.0, 0.0, 0.0])
 
-    m1 = float(m.body_mass[b1_id])
-    m2 = float(m.body_mass[b2_id])
-    lc1 = float(-m.body_ipos[b1_id][2])          # COM distance from joint 1
-    lc2 = float(-m.body_ipos[b2_id][2])          # COM distance from joint 2
-    # Hinge axis is y (axis="0 1 0") and body iquat is identity, so the inertia
-    # about the rotation axis is component [1] of diaginertia (about the COM).
-    I1_com = float(m.body_inertia[b1_id][1])
-    I2_com = float(m.body_inertia[b2_id][1])
-
-    return ModelParams(
-        m1=m1,
-        m2=m2,
-        lc1=lc1,
-        lc2=lc2,
-        l1=float(-m.body_pos[b2_id][2]),         # joint1 -> joint2 distance
-        I1=I1_com + m1 * lc1 ** 2,               # link1 inertia ABOUT JOINT 1
-        I2=I2_com + m2 * lc2 ** 2,               # link2 inertia ABOUT JOINT 2
-        b1=float(m.dof_damping[0]),              # viscous damping, joint 1
-        b2=float(m.dof_damping[1]),
-        f1=float(COULOMB_FRICTION[0]),           # Coulomb mu1 (from code, not XML)
-        f2=float(COULOMB_FRICTION[1]),           # Coulomb mu2 (from code, not XML)
-        gr=float(m.actuator_gear[0, 0]),         # gear ratio (notebook g_r)
-        Ir=float(m.dof_armature[0]),             # rotor inertia (notebook I_r)
-        g=float(-m.opt.gravity[2]),
-        tau1=float(m.actuator_ctrlrange[0, 1] * m.actuator_gear[0, 0]),
-        tau2=float(m.actuator_ctrlrange[1, 1] * m.actuator_gear[1, 0]),
-    )
-
-
-P = load_params()
-
-
-# Cost weights for the standalone single-solve in main(). The dataset generator
-# (generate_dataset.py) passes its own Q/R grid and does not use these.
-Q = jnp.diag(jnp.array([100.0, 100.0, 1.0, 1.0]))
-Qfin = Q
-R = jnp.diag(jnp.array([1.0, 1.0])) * 0.01
+# Default cost weights for main()'s single solve. The dataset generator passes
+# its own Q/R grid and does not use these.
+Q_DEFAULT = jnp.diag(jnp.array([100.0, 100.0, 1.0, 1.0]))
+R_DEFAULT = jnp.diag(jnp.array([1.0, 1.0])) * 0.01
 
 
 # ─────────────────────────────────────────────
-# Dynamics (notebook manipulator model, parameterized from dp.xml)
+# Dynamics (distributed-inertia model from the notebook)
 # ─────────────────────────────────────────────
-def M(q):
-    """Mass matrix M(q), strict notebook form (r2=lc2; I1,I2 about the joint)."""
-    q2 = q[1]
-    a = P.l1 * P.m2 * P.lc2 * jnp.cos(q2)         # l1 m2 r2 cos q2
-    rotor = P.gr ** 2 * P.Ir + P.Ir               # gr^2 Ir + Ir (0 when armature=0)
-    m00 = P.I1 + P.I2 + P.m2 * P.l1 ** 2 + 2 * a + rotor
-    m01 = P.I2 + a
+def M(x):
+    q2 = x[1]
+    c2 = jnp.cos(q2)
+    rotor = P.gr1 ** 2 * P.Ir + P.Ir
+    m00 = P.I1 + P.I2 + P.l1 ** 2 * P.m2 + 2 * P.l1 * P.m2 * P.lc2 * c2 + rotor
+    m01 = P.I2 + P.l1 * P.m2 * P.lc2 * c2
     m11 = P.I2
     return jnp.array([[m00, m01], [m01, m11]])
 
 
-def C(q):
-    """Coriolis/centrifugal matrix C(q,qdot), strict notebook form."""
-    q2, q1_dot, q2_dot = q[1], q[2], q[3]
-    a = P.l1 * P.m2 * P.lc2 * jnp.sin(q2)         # l1 m2 r2 sin q2
-    return jnp.array([[-2 * q2_dot * a, -q2_dot * a],
-                      [      q1_dot * a,        0.0]])
+def C(x):
+    q2, q1_dot, q2_dot = x[1], x[2], x[3]
+    s2 = jnp.sin(q2)
+    k = P.l1 * P.m2 * P.lc2
+    c00 = -2.0 * q2_dot * k * s2
+    c01 = -q2_dot * k * s2
+    c10 = q1_dot * k * s2
+    return jnp.array([[c00, c01], [c10, 0.0]])
 
 
-def G(q):
-    """Gravity vector G(q), notebook form in the dp.xml frame (q1=0 hangs down)."""
-    q1, q2 = q[0], q[1]
-    g1 = -P.g * P.m1 * P.lc1 * jnp.sin(q1) \
+def G(x):
+    # q1 = 0 hanging down (stable); enters the EOM with a "+" sign (see header).
+    q1, q2 = x[0], x[1]
+    g0 = -P.g * P.m1 * P.lc1 * jnp.sin(q1) \
          - P.g * P.m2 * (P.l1 * jnp.sin(q1) + P.lc2 * jnp.sin(q1 + q2))
-    g2 = -P.g * P.m2 * P.lc2 * jnp.sin(q1 + q2)
-    return jnp.array([g1, g2])
+    g1 = -P.g * P.m2 * P.lc2 * jnp.sin(q1 + q2)
+    return jnp.array([g0, g1])
 
 
-def coulomb_friction(dq):
-    """Notebook friction vector F(qdot) = b*qdot + mu*arctan(K*qdot).
-
-    Viscous damping (b) is read from the MJCF; the Coulomb term (mu) lives in code
-    (COULOMB_FRICTION) because dp.xml deliberately carries no frictionloss. arctan
-    is the notebook's smooth, differentiable stand-in for sign(qdot).
-    """
-    viscous = jnp.array([P.b1, P.b2]) * dq
-    coulomb = jnp.array([P.f1, P.f2]) * jnp.arctan(ARCTAN_K * dq)
-    return viscous + coulomb
+def friction(dq):
+    # Viscous + arctan-smoothed Coulomb friction (cloudpendulum sys-id).
+    f0 = P.b1 * dq[0] + P.mu1 * jnp.arctan(FRICTION_SCALE * dq[0])
+    f1 = P.b2 * dq[1] + P.mu2 * jnp.arctan(FRICTION_SCALE * dq[1])
+    return jnp.array([f0, f1])
 
 
 def dynamics(x, u):
-    """Forward dynamics: qddot = M^{-1} (tau - C qdot - G - F).
-
-    Algebraically the notebook manipulator equation  M qddot + C qdot + G + F = tau.
-    G enters with +sign here because it is written in the q1=0=down frame (see
-    header note), which reproduces MuJoCo's gravity torque exactly.
-    """
-    u  = u.reshape(2)
+    u = u.reshape(2)
     dq = x[2:].reshape(2)
-    rhs = u + G(x) - C(x) @ dq - coulomb_friction(dq)
+    rhs = u + G(x) - C(x) @ dq - friction(dq)
     ddq = jnp.linalg.solve(M(x), rhs)
     return jnp.concatenate([dq, ddq]).flatten()
 
 
+@jax.jit
+def rk4_step(x, u, dt):
+    k1 = dynamics(x, u)
+    k2 = dynamics(x + 0.5 * dt * k1, u)
+    k3 = dynamics(x + 0.5 * dt * k2, u)
+    k4 = dynamics(x + dt * k3, u)
+    return x + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+
 # ─────────────────────────────────────────────
-# Time-varying LQR gains around the reference trajectory
+# Discrete linearization of the RK4 step  (for TVLQR)
 # ─────────────────────────────────────────────
-# The collocation solve gives an open-loop plan (trajectory.csv + inputs.csv);
-# the swing-up is unstable AND the coarse dt=0.05 plan is open-loop infeasible, so
-# deployment needs FEEDBACK. We build per-step gains K_k for the tracking law
-#
-#     u_k = u_ref_k - K_k (x - x_ref_k)
-#
-# which is exactly what TVLQRController in evaluate_swingup.py applies, and save
-# them as results/K_matrix.npy.
-#
-# Two things were essential to get a K that actually swings up & holds in MuJoCo:
-#   1. Linearize the REAL MuJoCo control-step (n_sub substeps, friction injected)
-#      by finite differences -- NOT the analytic continuous dynamics. Over the
-#      coarse dt=0.05 interval the true discrete map differs enough from expm() of
-#      the instantaneous Jacobian that the analytic gains fail to track the swing.
-#   2. A finite-horizon backward Riccati sweep (not per-knot ARE) with a heavy
-#      terminal weight, so the gains are aggressive enough to hold the open-loop-
-#      infeasible plan on the reference. Tuned below; verified to swing up + hold.
-Q_LQR  = np.diag([500.0, 500.0, 1.0, 1.0])
-R_LQR  = np.diag([1.0, 1.0]) * 5e-4
-Qf_LQR = np.diag([2000.0, 2000.0, 5.0, 5.0])
-
-
-def _mj_apply_friction(model, data):
-    """Inject the notebook's Coulomb friction (dp.xml has none) -- same model as
-    simulation.apply_coulomb_friction, kept local to avoid importing the gym env."""
-    data.qfrc_applied[:2] = -np.array([P.f1, P.f2]) * np.arctan(ARCTAN_K * data.qvel[:2])
-
-
-def _step_control(model, data, x, u, n_sub):
-    """Advance the friction-aware MuJoCo sim one control step (n_sub substeps)."""
-    data.qpos[:2] = x[:2]
-    data.qvel[:2] = x[2:]
-    data.ctrl[:] = u
-    mujoco.mj_forward(model, data)
-    for _ in range(n_sub):
-        _mj_apply_friction(model, data)
-        mujoco.mj_step(model, data)
-    return np.concatenate([data.qpos[:2], data.qvel[:2]])
-
-
-def _linearize_discrete(model, data, x, u, n_sub, eps=1e-6):
-    """Central-difference linearization of the discrete control-step map x->x+."""
-    A = np.zeros((4, 4))
-    B = np.zeros((4, 2))
-    for i in range(4):
-        dx = np.zeros(4); dx[i] = eps
-        A[:, i] = (_step_control(model, data, x + dx, u, n_sub)
-                   - _step_control(model, data, x - dx, u, n_sub)) / (2 * eps)
-    for j in range(2):
-        du = np.zeros(2); du[j] = eps
-        B[:, j] = (_step_control(model, data, x, u + du, n_sub)
-                   - _step_control(model, data, x, u - du, n_sub)) / (2 * eps)
+def get_continuous_jacobians(x, u):
+    A = jax.jacfwd(dynamics, argnums=0)(x, u)
+    B = jax.jacfwd(dynamics, argnums=1)(x, u)
     return A, B
 
 
-def compute_tvlqr_gains(x_traj, u_traj, dt, Q=Q_LQR, R=R_LQR, Qf=Qf_LQR,
-                        xml_path=XML_PATH):
-    """TVLQR gains via a backward Riccati sweep over the MuJoCo-linearized discrete
-    dynamics (friction included), matching deployment. Returns K (steps-1, nu, nx);
-    K_k is the gain for interval k in  u = u_ref - K (x - x_ref).
+def get_discrete_matrices(x_k, u_k, dt):
+    """A_d, B_d for x_{k+1} = RK4(x_k, u_k), via the chain rule on the 4 stages."""
+    nx = x_k.shape[0]
+    I = jnp.eye(nx)
+
+    A1, B1 = get_continuous_jacobians(x_k, u_k)
+    dk1_dx, dk1_du = A1, B1
+
+    k1 = dynamics(x_k, u_k)
+    x2 = x_k + 0.5 * dt * k1
+    A2, B2 = get_continuous_jacobians(x2, u_k)
+    dk2_dx = A2 @ (I + 0.5 * dt * dk1_dx)
+    dk2_du = A2 @ (0.5 * dt * dk1_du) + B2
+
+    k2 = dynamics(x2, u_k)
+    x3 = x_k + 0.5 * dt * k2
+    A3, B3 = get_continuous_jacobians(x3, u_k)
+    dk3_dx = A3 @ (I + 0.5 * dt * dk2_dx)
+    dk3_du = A3 @ (0.5 * dt * dk2_du) + B3
+
+    k3 = dynamics(x3, u_k)
+    x4 = x_k + dt * k3
+    A4, B4 = get_continuous_jacobians(x4, u_k)
+    dk4_dx = A4 @ (I + dt * dk3_dx)
+    dk4_du = A4 @ (dt * dk3_du) + B4
+
+    A_d = I + (dt / 6.0) * (dk1_dx + 2 * dk2_dx + 2 * dk3_dx + dk4_dx)
+    B_d = (dt / 6.0) * (dk1_du + 2 * dk2_du + 2 * dk3_du + dk4_du)
+    return A_d, B_d
+
+
+def tvlqr_backward_pass(P_next, inputs, Q_d, R_d, dt):
+    x_k, u_k = inputs
+    A_d, B_d = get_discrete_matrices(x_k, u_k, dt)
+    S = R_d + B_d.T @ P_next @ B_d
+    K_k = jnp.linalg.solve(S, B_d.T @ P_next @ A_d)
+    P_k = Q_d + A_d.T @ P_next @ (A_d - B_d @ K_k)
+    return P_k, K_k
+
+
+def tvlqr_gains(x_ref, u_ref, Q, R, Qfin, dt):
     """
-    model = mujoco.MjModel.from_xml_path(str(xml_path))
-    data = mujoco.MjData(model)
-    n_sub = max(1, int(round(dt / model.opt.timestep)))
+    Time-varying LQR gains around the nominal (x_ref, u_ref).
 
-    x_traj = np.asarray(x_traj)
-    u_traj = np.asarray(u_traj)
-    Q, R = np.asarray(Q, dtype=float), np.asarray(R, dtype=float)
-    steps = x_traj.shape[0]
-
-    AB = [_linearize_discrete(model, data, x_traj[k], u_traj[k], n_sub)
-          for k in range(steps - 1)]
-
-    P = np.asarray(Qf, dtype=float)
-    gains = []
-    for A, B in reversed(AB):
-        S = R + B.T @ P @ B
-        K = np.linalg.solve(S, B.T @ P @ A)
-        P = Q + A.T @ P @ A - A.T @ P @ B @ K
-        gains.append(K)
-    gains.reverse()
-    return np.asarray(gains)
-
-
-def regenerate_gains(results_dir, dt=0.05):
-    """Compute K_matrix.npy for the trajectory.csv/inputs.csv already on disk,
-    WITHOUT re-solving them. This is the safe way to (re)create the gains for the
-    validated reference: the trajectory is left untouched, so the controller it
-    was tuned for keeps working."""
-    x_traj = np.loadtxt(os.path.join(results_dir, "trajectory.csv"),
-                        delimiter=",", skiprows=1)
-    u_traj = np.loadtxt(os.path.join(results_dir, "inputs.csv"),
-                        delimiter=",", skiprows=1)
-    K = compute_tvlqr_gains(x_traj, u_traj, dt)
-    np.save(os.path.join(results_dir, "K_matrix.npy"), K)
-    print(f"Saved TVLQR gains for the existing reference: K_matrix.npy {K.shape} "
-          f"(mean|K|={np.abs(K).mean():.3f}, max|K|={np.abs(K).max():.3f})")
-    return K
+    x_ref: (steps, nx)   u_ref: (steps, nu)
+    Returns K: (steps-1, nu, nx)   (gain to apply at each step k = 0..steps-2)
+    """
+    x_ref = jnp.asarray(x_ref)
+    u_ref = jnp.asarray(u_ref)
+    # Backward in time from the terminal cost over steps-1 transitions.
+    xs = x_ref[:-1][::-1]
+    us = u_ref[:-1][::-1]
+    scan_fn = lambda Pn, inp: tvlqr_backward_pass(Pn, inp, Q, R, dt)
+    _, K_rev = jax.lax.scan(scan_fn, Qfin, (xs, us))
+    return np.asarray(K_rev[::-1])
 
 
 # ─────────────────────────────────────────────
-# Objective and gradient
+# Direct collocation (trapezoidal) via IPOPT
 # ─────────────────────────────────────────────
-def stage_cost(x, u, x_goal):
-    e = x - x_goal
-    return e @ Q @ e + u @ R @ u
-
-
-def total_objective(z, steps, nx, nu, x_goal):
+@partial(jax.jit, static_argnums=(1, 2, 3))
+def _objective(z, steps, nx, nu, Q, R, Qfin, x_goal):
     X = z[:steps * nx].reshape(steps, nx)
     U = z[steps * nx:].reshape(steps, nu)
-    costs = jax.vmap(lambda x, u: stage_cost(x, u, x_goal))(X, U) * 0.5
+    e = X - x_goal
+    stage = jax.vmap(lambda ek, uk: ek @ Q @ ek + uk @ R @ uk)(e, U) * 0.5
     terminal = (X[-1] - x_goal) @ Qfin @ (X[-1] - x_goal)
-    return jnp.sum(costs.at[-1].set(terminal))
+    return jnp.sum(stage.at[-1].set(terminal))
 
 
-def total_objective_grad(z, steps, nx, nu, x_goal):
+@partial(jax.jit, static_argnums=(1, 2, 3))
+def _gradient(z, steps, nx, nu, Q, R, Qfin, x_goal):
     X = z[:steps * nx].reshape(steps, nx)
     U = z[steps * nx:].reshape(steps, nu)
-    gX, gU = jax.vmap(lambda x, u: (2 * Q @ (x - x_goal), 2 * R @ u))(X, U)
+    gX, gU = jax.vmap(lambda xk, uk: (2 * Q @ (xk - x_goal), 2 * R @ uk))(X, U)
     gX = (gX * 0.5).at[-1].set(2 * Qfin @ (X[-1] - x_goal))
     gU = gU * 0.5
     return jnp.concatenate([gX.flatten(), gU.flatten()])
 
 
-# ─────────────────────────────────────────────
-# Trapezoidal collocation constraints
-# ─────────────────────────────────────────────
-def trapezoidal_collocation(xk, xkp1, uk, ukp1, dt):
-    fk = dynamics(xk, uk)
-    fkp1 = dynamics(xkp1, ukp1)
-    return (xkp1 - xk - (dt / 2.0) * (fk + fkp1)).flatten()
-
-
-def constraints(z, steps, nx, nu, x0, x_goal, dt):
+@partial(jax.jit, static_argnums=(1, 2, 3))
+def _constraints(z, steps, nx, nu, x0, x_goal, dt):
     X = z[:steps * nx].reshape(steps, nx)
     U = z[steps * nx:].reshape(steps, nu)
     c_init = X[0] - x0
     c_final = X[-1] - x_goal
-    trap = jax.vmap(
-        lambda xk, xkp1, uk, ukp1: trapezoidal_collocation(xk, xkp1, uk, ukp1, dt)
-    )
-    c_dyn = trap(X[:-1], X[1:], U[:-1], U[1:]).flatten()
+
+    # RK4 defect (zero-order-hold on u): x_{k+1} = RK4(x_k, u_k, dt). Using the
+    # SAME integrator the simulator and the TVLQR linearization use makes the
+    # nominal exactly reproducible -- a trapezoidal defect leaves it open-loop-
+    # infeasible at this dt (the fast swing-up reaches ~16 rad/s), so the gains
+    # have nothing trackable and the closed loop diverges immediately.
+    def defect(xk, xkp1, uk):
+        return xkp1 - rk4_step(xk, uk, dt)
+
+    c_dyn = jax.vmap(defect)(X[:-1], X[1:], U[:-1]).flatten()
     return jnp.concatenate([c_init, c_dyn, c_final])
 
 
-# ─────────────────────────────────────────────
-# IPOPT problem wrapper
-# ─────────────────────────────────────────────
-class Problem:
-    """
-    min  f(z)   with z = [x_0, ..., x_N, u_0, ..., u_N]
-    s.t. h(z) = 0,  lb <= z <= ub
-    """
-    def __init__(self, steps, nx, nu, x0, x_goal, dt):
-        print(f"Problem: {steps} steps | nx={nx} | nu={nu}")
-        self._obj = jax.jit(lambda z: total_objective(z, steps, nx, nu, x_goal))
-        self._grad = lambda z: total_objective_grad(z, steps, nx, nu, x_goal)
-        self._cons = jax.jit(lambda z: constraints(z, steps, nx, nu, x0, x_goal, dt))
-        self._jac = jax.jit(jax.jacobian(
-            lambda z: constraints(z, steps, nx, nu, x0, x_goal, dt)
-        ))
+@partial(jax.jit, static_argnums=(1, 2, 3))
+def _jacobian(z, steps, nx, nu, x0, x_goal, dt):
+    jac = jax.jacobian(lambda zz: _constraints(zz, steps, nx, nu, x0, x_goal, dt))
+    return jac(z)
+
+
+class _Problem:
+    """cyipopt problem object for one (Q, R, x0, x_goal) collocation solve."""
+
+    def __init__(self, steps, nx, nu, x0, x_goal, dt, Q, R, Qfin):
+        self.steps, self.nx, self.nu, self.dt = steps, nx, nu, dt
+        self.x0, self.x_goal = jnp.asarray(x0), jnp.asarray(x_goal)
+        self.Q, self.R, self.Qfin = jnp.asarray(Q), jnp.asarray(R), jnp.asarray(Qfin)
 
     def objective(self, z):
-        return float(self._obj(z))
+        return float(_objective(z, self.steps, self.nx, self.nu,
+                                self.Q, self.R, self.Qfin, self.x_goal))
 
     def gradient(self, z):
-        return np.asarray(self._grad(z), dtype=np.float64).ravel()
+        return np.asarray(_gradient(z, self.steps, self.nx, self.nu,
+                                    self.Q, self.R, self.Qfin, self.x_goal),
+                          dtype=np.float64).ravel()
 
     def constraints(self, z):
-        return np.asarray(self._cons(z), dtype=np.float64)
+        return np.asarray(_constraints(z, self.steps, self.nx, self.nu,
+                                       self.x0, self.x_goal, self.dt),
+                          dtype=np.float64)
 
     def jacobian(self, z):
-        return np.asarray(self._jac(z), dtype=np.float64).ravel()
+        return np.asarray(_jacobian(z, self.steps, self.nx, self.nu,
+                                    self.x0, self.x_goal, self.dt),
+                          dtype=np.float64).ravel()
 
 
-# ─────────────────────────────────────────────
-# Open-loop verification against the real MuJoCo sim
-# ─────────────────────────────────────────────
-def verify_open_loop(x_traj, u_traj, dt, xml_path=XML_PATH):
+def solve_trajectory(x0, x_goal=None, Q=None, R=None, Qfin=None,
+                     T=2.0, dt=0.05, max_iter=300, tol=1e-3, verbose=False,
+                     z0=None, seed=0):
     """
-    Replay the optimized torques open-loop in MuJoCo and return the resulting
-    state trajectory. If the planner matches the simulator, the final state
-    should land near x_traj[-1]. This is the sanity check that previously failed.
+    Solve a swing-up / regulation trajectory with trapezoidal collocation.
 
-    dp.xml carries no Coulomb friction; we inject the notebook's Coulomb model
-    (mu*arctan(K*qdot)) as a generalized force via qfrc_applied each substep, so
-    the MuJoCo replay sees the SAME friction the planner optimized against.
+    Returns (time (steps,), x_traj (steps, nx), u_traj (steps, nu), info).
     """
-    m = mujoco.MjModel.from_xml_path(str(xml_path))
-    d = mujoco.MjData(m)
-    x_traj = np.asarray(x_traj)
-    u_traj = np.asarray(u_traj)
+    x0 = jnp.asarray(x0)
+    x_goal = X_GOAL if x_goal is None else jnp.asarray(x_goal)
+    Q = Q_DEFAULT if Q is None else jnp.asarray(Q)
+    R = R_DEFAULT if R is None else jnp.asarray(R)
+    Qfin = Q if Qfin is None else jnp.asarray(Qfin)
 
-    d.qpos[:2] = x_traj[0, :2]
-    d.qvel[:2] = x_traj[0, 2:]
-    mujoco.mj_forward(m, d)
-
-    n_sub = max(1, int(round(dt / m.opt.timestep)))
-    lo = np.array([-P.tau1, -P.tau2])
-    hi = np.array([P.tau1, P.tau2])
-    mu = np.array([P.f1, P.f2])
-
-    sim = []
-    for u in u_traj:
-        d.ctrl[:] = np.clip(u, lo, hi)
-        for _ in range(n_sub):
-            # Coulomb friction torque opposes motion: -mu*arctan(K*qdot).
-            d.qfrc_applied[:2] = -mu * np.arctan(ARCTAN_K * d.qvel[:2])
-            mujoco.mj_step(m, d)
-        sim.append(np.concatenate([d.qpos[:2].copy(), d.qvel[:2].copy()]))
-    return np.array(sim)
-
-
-# ─────────────────────────────────────────────
-# Plotting
-# ─────────────────────────────────────────────
-def plot_results(time_span, x_traj, u_traj, out_dir, sim_traj=None):
-    os.makedirs(out_dir, exist_ok=True)
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4))
-    ax1.plot(time_span, x_traj[:, 0], label=r'$q_1$ (rad)')
-    ax1.plot(time_span, x_traj[:, 1], label=r'$q_2$ (rad)')
-    if sim_traj is not None:
-        ax1.plot(time_span, sim_traj[:, 0], '--', label=r'$q_1$ MuJoCo')
-        ax1.plot(time_span, sim_traj[:, 1], '--', label=r'$q_2$ MuJoCo')
-    ax1.set(title='Joint Angles over Time', xlabel='Time (s)', ylabel='Angle (rad)')
-    ax1.legend(); ax1.grid(True)
-
-    ax2.plot(time_span, x_traj[:, 2], '--', label=r'$\dot{q}_1$ (rad/s)')
-    ax2.plot(time_span, x_traj[:, 3], '--', label=r'$\dot{q}_2$ (rad/s)')
-    ax2.set(title='Joint Velocities over Time', xlabel='Time (s)', ylabel='Velocity (rad/s)')
-    ax2.legend(); ax2.grid(True)
-    plt.tight_layout()
-    fig.savefig(os.path.join(out_dir, "joint_states.png"), dpi=150)
-
-    fig2, ax = plt.subplots(figsize=(7, 4))
-    ax.plot(time_span, u_traj[:, 0], label=r'$u_1$ (Nm)')
-    ax.plot(time_span, u_traj[:, 1], label=r'$u_2$ (Nm)')
-    ax.set(title='Control Inputs (Torques) over Time',
-           xlabel='Time (s)', ylabel='Torque (Nm)')
-    ax.legend(); ax.grid(True)
-    plt.tight_layout()
-    fig2.savefig(os.path.join(out_dir, "torques.png"), dpi=150)
-
-
-# ─────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────
-def main():
-    import argparse
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument(
-        "--gains-only", action="store_true",
-        help="Only (re)compute results/K_matrix.npy for the trajectory.csv/"
-             "inputs.csv already on disk; do NOT re-solve or overwrite them. "
-             "Use this to refresh the TVLQR gains for the validated reference.")
-    args = ap.parse_args()
-
-    base = os.path.dirname(os.path.abspath(__file__))
-    results_dir = os.path.join(base, "results")
-
-    if args.gains_only:
-        # Safe path: keep the validated swing-up trajectory, just rebuild its gains.
-        print("Computing TVLQR gains for the existing reference (no re-solve)...")
-        regenerate_gains(results_dir)
-        return
-
-    print("Loaded model parameters from dp.xml:")
-    for k, v in P._asdict().items():
-        print(f"  {k:5s} = {v:.6g}")
-    print("\nWARNING: a full re-solve OVERWRITES trajectory.csv / inputs.csv with a\n"
-          "fresh collocation plan. That plan reaches upright only near the final\n"
-          "knot and is hard to track closed-loop, so the resulting reference may\n"
-          "NOT pass the generate_tvlqr_dataset self-check. To refresh only the\n"
-          "gains for the validated reference, run:  python generate_k.py --gains-only\n")
-
-    T = 2.0
-    dt = 0.05
-    steps = int(T / dt) + 1
-    time_span = jnp.linspace(0, T, steps)
     nx, nu = 4, 2
+    steps = int(round(T / dt)) + 1
+    time = jnp.linspace(0.0, T, steps)
+    tau = P.torque_limit
 
-    x0 = jnp.array([0.0, 0.0, 0.0, 0.0])
-    x_goal = jnp.array([jnp.pi, 0.0, 0.0, 0.0])
+    if z0 is None:
+        key = jax.random.PRNGKey(seed)
+        x_init = jnp.zeros((steps, nx)).at[:, 0].set(
+            jnp.linspace(float(x0[0]), float(x_goal[0]), steps))
+        u_init = jax.random.uniform(key, (steps, nu), minval=-tau, maxval=tau)
+        z0 = jnp.concatenate([x_init.flatten(), u_init.flatten()])
 
-    # Initial guess: linear angle ramp + random torques
-    key = jax.random.PRNGKey(0)
-    x_init = jnp.zeros((steps, nx)).at[:, 0].set(jnp.linspace(0, jnp.pi, steps))
-    u_init = jax.random.uniform(key, (steps, nu), minval=-P.tau1, maxval=P.tau1)
-    z0 = jnp.concatenate([x_init.flatten(), u_init.flatten()])
-
-    # Variable bounds: torque limits come straight from the actuator ctrlrange.
     x_lb = jnp.full((steps, nx), -jnp.inf)
-    x_ub = jnp.full((steps, nx),  jnp.inf)
-    u_lb = jnp.tile(jnp.array([-P.tau1, -P.tau2]), (steps, 1))
-    u_ub = jnp.tile(jnp.array([P.tau1, P.tau2]), (steps, 1))
+    x_ub = jnp.full((steps, nx), jnp.inf)
+    u_lb = jnp.full((steps, nu), -tau)
+    u_ub = jnp.full((steps, nu), tau)
     lb = jnp.concatenate([x_lb.flatten(), u_lb.flatten()])
     ub = jnp.concatenate([x_ub.flatten(), u_ub.flatten()])
 
-    # Equality constraints: init + dynamics + final
     num_constraints = nx + (steps - 1) * nx + nx
     cl = cu = jnp.zeros(num_constraints)
     num_vars = steps * nx + steps * nu
 
-    problem = cyipopt.Problem(
+    nlp = cyipopt.Problem(
         n=num_vars, m=num_constraints,
-        problem_obj=Problem(steps, nx, nu, x0, x_goal, dt),
+        problem_obj=_Problem(steps, nx, nu, x0, x_goal, dt, Q, R, Qfin),
         lb=lb, ub=ub, cl=cl, cu=cu,
     )
-    problem.add_option('max_iter', 300)
-    problem.add_option('tol', 1e-3)
-    problem.add_option('print_level', 0)
+    nlp.add_option("max_iter", max_iter)
+    nlp.add_option("tol", tol)
+    nlp.add_option("print_level", 5 if verbose else 0)
 
-    z_opt, info = problem.solve(z0)
-    print("Solver status:", info['status_msg'])
+    z_opt, info = nlp.solve(np.asarray(z0))
+    x_traj = np.asarray(z_opt[:steps * nx]).reshape(steps, nx)
+    u_traj = np.asarray(z_opt[steps * nx:]).reshape(steps, nu)
+    return np.asarray(time), x_traj, u_traj, info
 
-    x_traj = z_opt[:steps * nx].reshape(steps, nx)
-    u_traj = z_opt[steps * nx:].reshape(steps, nu)
-    print("Planned final state:", np.asarray(x_traj[-1]))
 
-    # ── Sanity check: replay the torques open-loop in MuJoCo. ──
-    # NOTE: the per-step analytic dynamics match MuJoCo to ~1e-13 (M == mj_fullM,
-    # same C/G/F). Any large error here is NOT a model mismatch but the expected
-    # divergence of an OPEN-LOOP replay of a coarse (dt=0.05 trapezoidal) plan on
-    # an unstable swing-up -- which is exactly why the pipeline adds TVLQR feedback
-    # (generate_tvlqr_dataset.py). Closed-loop, the trajectory is tracked.
-    sim_traj = verify_open_loop(x_traj, u_traj, dt)
-    print("MuJoCo final state (open-loop replay):", sim_traj[-1])
-    err = float(np.linalg.norm(sim_traj[-1] - np.asarray(x_traj[-1])))
-    print(f"Planner-vs-MuJoCo open-loop final-state error: {err:.4f} "
-          f"(open-loop on an unstable plan; stabilized closed-loop by TVLQR)")
+# ─────────────────────────────────────────────
+# TVLQR closed-loop controller + rollout (numpy simulator)
+# ─────────────────────────────────────────────
+def wrap_to_pi(a):
+    return (a + np.pi) % (2 * np.pi) - np.pi
 
-    # Save results
-    os.makedirs(results_dir, exist_ok=True)
 
-    np.savetxt(os.path.join(results_dir, "trajectory.csv"), np.asarray(x_traj),
-               delimiter=",", header="q1,q2,q1_dot,q2_dot", comments="")
-    header_full = "time,q1,q2,q1_dot,q2_dot"
-    data_full = np.column_stack([np.asarray(time_span), np.asarray(x_traj)])
-    np.savetxt(os.path.join(results_dir, "optimal_trajectory_full.csv"), data_full,
-               delimiter=",", header=header_full, comments="")
-    np.savetxt(os.path.join(results_dir, "inputs.csv"), np.asarray(u_traj),
-               delimiter=",", header="u1,u2", comments="")
+def to_feature_space(x):
+    """[q1,q2,qd1,qd2] -> [cos q1, sin q1, cos q2, sin q2, 0.1 qd1, 0.1 qd2]."""
+    v_scale = 0.1
+    if x.ndim == 1:
+        p0, p1 = x[0], x[1]
+        v = x[2:] * v_scale
+        return np.concatenate(([np.cos(p0), np.sin(p0), np.cos(p1), np.sin(p1)], v))
+    p0, p1 = x[0, :], x[1, :]
+    v = x[2:, :] * v_scale
+    return np.vstack((np.cos(p0), np.sin(p0), np.cos(p1), np.sin(p1), v))
 
-    # TVLQR feedback gains around this plan -> K_matrix.npy. Saved together with
-    # the CSVs so (trajectory, inputs, K) always form a consistent set.
-    K_gains = compute_tvlqr_gains(np.asarray(x_traj), np.asarray(u_traj), dt)
-    np.save(os.path.join(results_dir, "K_matrix.npy"), K_gains)
-    print(f"Saved TVLQR gains: K_matrix.npy {K_gains.shape} "
-          f"(mean|K|={np.abs(K_gains).mean():.3f}, max|K|={np.abs(K_gains).max():.3f})")
 
-    plot_results(np.asarray(time_span), np.asarray(x_traj), np.asarray(u_traj),
-                 os.path.join(base, "graphs/reference"), sim_traj=sim_traj)
+def _ranked(x, ref, k=1):
+    diff = to_feature_space(ref) - to_feature_space(x).reshape(-1, 1)
+    dists = np.linalg.norm(diff, axis=0)
+    order = np.argsort(dists)
+    return order[:k], dists[order[:k]]
+
+
+def _K_weighted(x, ref_T, K, k=5):
+    idx, dists = _ranked(x, ref_T, k=k)
+    w = 1.0 / (dists + 1e-6)
+    w = w / w.sum()
+    Ks = K[np.clip(idx, 0, len(K) - 1)]
+    return np.sum(w[:, None, None] * Ks, axis=0)
+
+
+def rollout_tvlqr(x_ref, u_ref, K, x0, n_steps,
+                  dt_control=0.05, dt_sim=None, torque_limit=None,
+                  deviation_threshold=2.0, noise_std=None, rng=None):
+    """
+    Closed-loop TVLQR rollout in the numpy/RK4 simulator.
+
+    Tracks the nominal trajectory index-by-index; if the feature-space deviation
+    exceeds `deviation_threshold` (or the nominal has been exhausted -> holding),
+    it switches to a nearest-neighbour + distance-weighted-gain recovery mode.
+    This is the controller from old_pendulum/simul.ipynb / evaluate_swingup.py.
+
+    x_ref: (steps, nx)  u_ref: (steps, nu)  K: (steps-1, nu, nx)
+    Returns (states (n_steps, nx), actions (n_steps, nu), success).
+    """
+    tau = P.torque_limit if torque_limit is None else torque_limit
+    # dt_sim defaults to dt_control: integrating with the SAME single RK4 step the
+    # TVLQR gains were derived from keeps the plant and the controller's discrete
+    # model identical, so tracking is exact. Pass a smaller dt_sim for a finer
+    # (and slightly model-mismatched) continuous-time rollout.
+    if dt_sim is None:
+        dt_sim = dt_control
+    ref_T = np.asarray(x_ref).T          # (nx, steps) for the feature helpers
+    uref_T = np.asarray(u_ref).T         # (nu, steps)
+    K = np.asarray(K)
+    max_idx = ref_T.shape[1] - 1
+    n_sub = max(1, int(round(dt_control / dt_sim)))
+
+    x = np.asarray(x0, dtype=np.float64).copy()
+    current_idx = 0
+    states, actions = [], []
+    held = 0
+
+    for _ in range(n_steps):
+        target = ref_T[:, current_idx].reshape(4, 1)
+        _, d = _ranked(x, target, k=1)
+        holding = current_idx >= max_idx
+        if d[0] > deviation_threshold or holding:
+            best, _ = _ranked(x, ref_T, k=1)
+            idx = int(best[0])
+            K_gain = _K_weighted(x, ref_T, K, k=5)
+        else:
+            idx = current_idx
+            K_gain = K[idx]
+            current_idx += 1
+
+        x_des, u_des = ref_T[:, idx], uref_T[:, idx]
+        err = x - x_des
+        err[0], err[1] = wrap_to_pi(err[0]), wrap_to_pi(err[1])
+        u = np.clip(u_des - K_gain @ err, -tau, tau)
+
+        states.append(x.copy())
+        actions.append(u.copy())
+
+        xs = jnp.asarray(x)
+        uj = jnp.asarray(u)
+        for _ in range(n_sub):
+            xs = rk4_step(xs, uj, dt_sim)
+        x = np.array(xs, dtype=np.float64)
+        if noise_std is not None and rng is not None:
+            x = x + rng.normal(0.0, noise_std, size=4)
+        x[0] = wrap_to_pi(x[0])
+        x[1] = wrap_to_pi(x[1])
+
+        ang = abs(wrap_to_pi(x[0] - np.pi)) + abs(wrap_to_pi(x[1]))
+        vel = abs(x[2]) + abs(x[3])
+        held = held + 1 if (ang < 0.2 and vel < 1.0) else 0
+
+    # Success requires the rollout to END in a sustained upright hold (the final
+    # `held` counts consecutive in-tolerance steps ending at the last step), so
+    # swing-ups that reach the top but fall back off are rejected.
+    return np.array(states), np.array(actions), held >= 10
+
+
+# ─────────────────────────────────────────────
+# Plotting (matplotlib)
+# ─────────────────────────────────────────────
+def plot_results(time, x_traj, u_traj, out_dir, sim_traj=None):
+    os.makedirs(out_dir, exist_ok=True)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4))
+    ax1.plot(time, x_traj[:, 0], label=r"$q_1$ (rad)")
+    ax1.plot(time, x_traj[:, 1], label=r"$q_2$ (rad)")
+    if sim_traj is not None:
+        ax1.plot(time, sim_traj[:, 0], "--", label=r"$q_1$ RK4 replay")
+        ax1.plot(time, sim_traj[:, 1], "--", label=r"$q_2$ RK4 replay")
+    ax1.set(title="Joint Angles", xlabel="Time (s)", ylabel="Angle (rad)")
+    ax1.legend(); ax1.grid(True)
+
+    ax2.plot(time, x_traj[:, 2], label=r"$\dot{q}_1$ (rad/s)")
+    ax2.plot(time, x_traj[:, 3], label=r"$\dot{q}_2$ (rad/s)")
+    ax2.set(title="Joint Velocities", xlabel="Time (s)", ylabel="Velocity (rad/s)")
+    ax2.legend(); ax2.grid(True)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "joint_states.png"), dpi=150)
+    plt.close(fig)
+
+    fig2, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(time, u_traj[:, 0], label=r"$u_1$ (Nm)")
+    ax.plot(time, u_traj[:, 1], label=r"$u_2$ (Nm)")
+    ax.set(title="Control Torques", xlabel="Time (s)", ylabel="Torque (Nm)")
+    ax.legend(); ax.grid(True)
+    fig2.tight_layout()
+    fig2.savefig(os.path.join(out_dir, "torques.png"), dpi=150)
+    plt.close(fig2)
+
+
+def simulate_open_loop(x0, u_traj, dt):
+    """Replay the planned torques open-loop with RK4 (planner sanity check)."""
+    x = jnp.asarray(x0)
+    sim = [np.asarray(x)]
+    for u in u_traj[:-1]:
+        x = rk4_step(x, jnp.asarray(u), dt)
+        sim.append(np.asarray(x))
+    return np.array(sim)
+
+
+# ─────────────────────────────────────────────
+# Main: single swing-up reference + TVLQR gains
+# ─────────────────────────────────────────────
+def main():
+    print("Model parameters (cloudpendulum sys-id):")
+    for k, v in P._asdict().items():
+        print(f"  {k:13s} = {v:.6g}")
+
+    T, dt = 2.0, 0.05
+    x0 = jnp.array([0.0, 0.0, 0.0, 0.0])
+    x_goal = X_GOAL
+
+    time, x_traj, u_traj, info = solve_trajectory(
+        x0, x_goal, Q_DEFAULT, R_DEFAULT, Q_DEFAULT, T=T, dt=dt)
+    print("Solver status:", info["status_msg"].decode() if isinstance(
+        info["status_msg"], bytes) else info["status_msg"])
+    print("Planned final state:", x_traj[-1])
+
+    # Open-loop RK4 replay: do the planned torques actually swing it up?
+    sim_traj = simulate_open_loop(x0, u_traj, dt)
+    err = float(np.linalg.norm(sim_traj[-1] - x_traj[-1]))
+    print(f"Planner-vs-RK4 open-loop final-state error: {err:.4f}")
+
+    # TVLQR gains around the nominal trajectory.
+    K = tvlqr_gains(x_traj, u_traj, Q_DEFAULT, R_DEFAULT, Q_DEFAULT, dt)
+    print(f"K: {K.shape[0]} gains of shape {K.shape[1:]} ")
+
+    results_dir.mkdir(parents=True, exist_ok=True)
+    np.savetxt(results_dir / "trajectory.csv", x_traj, delimiter=",",
+               header="q1,q2,q1_dot,q2_dot", comments="")
+    np.savetxt(results_dir / "inputs.csv", u_traj, delimiter=",",
+               header="u1,u2", comments="")
+    np.savetxt(results_dir / "optimal_trajectory_full.csv",
+               np.column_stack([time, x_traj]), delimiter=",",
+               header="time,q1,q2,q1_dot,q2_dot", comments="")
+    np.save(results_dir / "K_matrix.npy", K)
+
+    plot_results(time, x_traj, u_traj, current_dir / "graphs/reference",
+                 sim_traj=sim_traj)
+    print(f"Saved trajectory.csv, inputs.csv, K_matrix.npy to {results_dir}")
 
 
 if __name__ == "__main__":

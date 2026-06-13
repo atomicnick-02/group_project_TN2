@@ -2,6 +2,25 @@
   "name": "Robotics Dev Environment",
   "image": "robotics:v4",
 
+  // ── Run as a non-root user matching the host UID/GID (1000:1000) ──
+  // Without this the container runs as root, so every file and git write
+  // on the bind-mounted workspace ends up owned by root on the host, which
+  // breaks host-side git (cannot write .git/objects or lock refs).
+  // The common-utils feature creates the user and grants it passwordless
+  // sudo (needed by the apt-get in postCreateCommand below). It layers on
+  // top of the prebuilt image, so no full rebuild of robotics:v4 is needed.
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "username": "dev",
+      "uid": "1000",
+      "gid": "1000",
+      "installZsh": false,
+      "upgradePackages": false
+    }
+  },
+  "remoteUser": "dev",
+  "updateRemoteUserUID": true,
+
   "runArgs": [
     "--gpus", "all",
     "--device", "/dev/dri",
@@ -12,7 +31,9 @@
   ],
  
   // ── One-time setup ──────────────────────────────────────────────
-  "postCreateCommand": "apt-get update && apt-get install -y --no-install-recommends x11-utils mesa-utils && echo 'Setup complete' && echo 'export PYTHONPATH=$PYTHONPATH:/workspaces/group_project_TN2' >> /etc/bash.bashrc",
+  // Runs as the non-root "dev" user now, so apt-get and writing to
+  // /etc/bash.bashrc need sudo (provided by the common-utils feature).
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y --no-install-recommends x11-utils mesa-utils && echo 'Setup complete' && echo 'export PYTHONPATH=$PYTHONPATH:/workspaces/group_project_TN2' | sudo tee -a /etc/bash.bashrc",
 
    // ── Environment ─────────────────────────────────────────────────
   "containerEnv": {

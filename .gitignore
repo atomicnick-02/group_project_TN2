@@ -2,5 +2,5 @@
 .urdf
 gripper/assets/ycb/*
 gripper/assets/autodesk/*
-
+.claude
 __pycache__/

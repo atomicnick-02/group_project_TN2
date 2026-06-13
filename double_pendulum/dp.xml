@@ -9,12 +9,9 @@
   <worldbody>
     <camera name="side" pos="0 0.4 0.1" mode="targetbody" target="link1"/> 
     <body name="link1" pos="0 0 0.2">
-      <!-- Coulomb (dry) friction is intentionally NOT modelled here. It is kept
-           outside the MJCF and applied in code (generate_k.py) via the notebook's
-           Coulomb model  F = mu * arctan(100 * qdot)  so the analytic planner and
-           the MuJoCo replay share one friction model. Only viscous damping stays. -->
       <joint name="q1"
              damping="7.634058385430087e-12"
+             frictionloss="0.00305"
              armature="0"/>
       <inertial pos="0 0 -0.05" mass="0.10548177618443695"
                 diaginertia="0.00046166221821039165 0.00046166221821039165 1e-6"/> <!-- Why is the diaginertial like this? -->
@@ -23,6 +20,7 @@
       <body name="link2" pos="0 0 -0.05">
         <joint name="q2"
                damping="0.0005106535523065844"
+               frictionloss="0.0007777"
                armature="0"/>
         <inertial pos="0 0 -0.03670036749567022" mass="0.07619744360415454"
                   diaginertia="0.00023702395072092597 0.00023702395072092597 1e-6"/>

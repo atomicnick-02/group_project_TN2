@@ -7,23 +7,6 @@ from pathlib import Path
 
 current_dir = Path(__file__).resolve().parent
 
-# Coulomb (dry) friction is kept OUTSIDE dp.xml (no frictionloss) and applied in
-# code with the cloudpendulum notebook's model  F = mu * arctan(K * qdot), so every
-# simulation shares the exact friction the planner (generate_k.py) optimizes
-# against. Keep these in sync with generate_k.COULOMB_FRICTION / ARCTAN_K.
-COULOMB_FRICTION = np.array([0.00305, 0.0007777])
-ARCTAN_K = 100.0
-
-
-def apply_coulomb_friction(model, data):
-    """Write the code-based Coulomb friction torque into data.qfrc_applied.
-
-    dp.xml carries no frictionloss, so any loop that steps the model with raw
-    mujoco.mj_step (instead of DoublePendulumEnv.step) must call this each substep
-    to reproduce the notebook's dry friction  -mu*arctan(K*qdot)  on the 2 hinges.
-    """
-    data.qfrc_applied[:2] = -COULOMB_FRICTION * np.arctan(ARCTAN_K * data.qvel[:2])
-
 
 class DoublePendulumEnv(gym.Env):
 	metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
@@ -68,8 +51,6 @@ class DoublePendulumEnv(gym.Env):
 									self.action_space.low,
 									self.action_space.high)
 		for _ in range(self.frame_skip):
-			# Inject code-based Coulomb friction (dp.xml has none) each substep.
-			apply_coulomb_friction(self.model, self.data)
 			mujoco.mj_step(self.model, self.data)
 
 		obs = self._get_obs()
