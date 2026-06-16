@@ -1,0 +1,23 @@
+# Project requirements — installed on top of the core pip packages
+# already declared in the Dockerfile (mujoco, gymnasium, stable-baselines3,
+# shimmy, jax, cyipopt, dm_control, matplotlib) and the editable repos
+# (robosuite, robomimic, mimicgen, robosuite-task-zoo).
+
+# Deep learning / models
+torch
+torchvision
+transformers
+ultralytics
+
+# Vision / image IO
+opencv-python
+Pillow
+
+# Data IO
+h5py
+numpy
+scipy
+
+# Visualization / dashboards
+dash
+plotly
