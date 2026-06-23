@@ -28,6 +28,12 @@ Run from the repo root (school-env has mujoco + torch):
     python double_pendulum/benchmark_swingup.py --controller diffusion
     python double_pendulum/benchmark_swingup.py --controller both --n-rollouts 20
 
+NOTE on cost: the diffusion policy denoises 100 steps every re-plan, so on CPU
+a single rollout is ~40 s at the default --n-exec 2 (~80 s at --n-exec 1). The
+full default sweep (9 conditions) is therefore minutes-to-an-hour of CPU per
+controller -- use a GPU, fewer --n-rollouts, or fewer --conditions for a quick
+look. TVLQR is ~0.1 ms/step and effectively free.
+
 Outputs go to double_pendulum/graphs/evaluation/benchmark/:
     benchmark_per_rollout.csv   one row per rollout (every raw metric)
     benchmark_summary.json      per-condition / per-controller aggregates
@@ -39,10 +45,24 @@ import sys
 import csv
 import json
 import time
+import zlib
 import argparse
+import warnings
+import multiprocessing as mp
 from pathlib import Path
+from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
+
+# ── quiet the noise ───────────────────────────────────────────────────────────
+# Silence library warnings (Torch AMP deprecations, dm_control/MuJoCo import
+# chatter, etc.). Scoped to the main process here; _worker_init re-applies it in
+# every spawned worker since spawn starts a fresh interpreter.
+warnings.filterwarnings("ignore")
+os.environ.setdefault("ABSL_LOG_LEVEL", "3")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 # Make both the repo root (for diffusion_models) and this dir importable.
+# This MUST run before the local `simulation` / `visualize_swingup` imports.
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))
@@ -52,6 +72,7 @@ import mujoco
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 from simulation import DoublePendulumEnv
 # Reuse the EXACT controllers used by the interactive viewer so the headless
@@ -365,6 +386,99 @@ def plot_results(summary, examples, controllers, base_conditions, noise_levels):
     print(f"[plots] saved to {OUT_DIR}")
 
 
+# ── parallel workers ──────────────────────────────────────────────────────────
+# Each rollout is one "job". MuJoCo's MjData and a Torch policy are NOT safe to
+# share across threads, so we parallelize at the PROCESS level: every worker owns
+# its own env + controller(s) and pulls jobs off the pool. A worker builds its
+# env/controller ONCE (lazily) and caches them, so the expensive checkpoint load
+# is paid once per process, not once per rollout.
+_CFG = None          # shared run config, set by the pool initializer
+_ENV = None          # this worker's MuJoCo env
+_CTRL_CACHE = {}     # this worker's controllers, keyed by name
+
+
+def _worker_init(cfg, torch_threads):
+    """Pool initializer: store the shared config and cap Torch's own threading.
+
+    With many worker processes already saturating the cores, letting each one
+    also spin up an intra-op thread pool oversubscribes the CPU and slows things
+    down -- so by default each worker runs Torch single-threaded.
+
+    Also re-applies the warning filter: spawned workers start a fresh interpreter
+    so the main-process filter does NOT carry over.
+    """
+    global _CFG, _ENV, _CTRL_CACHE
+    warnings.filterwarnings("ignore")
+    _CFG, _ENV, _CTRL_CACHE = cfg, None, {}
+    if torch_threads and torch_threads > 0:
+        try:
+            import torch
+            torch.set_num_threads(torch_threads)
+            try:
+                torch.set_num_interop_threads(torch_threads)
+            except Exception:
+                pass            # can only be set once per process
+        except Exception:
+            pass
+
+
+def _get_env():
+    global _ENV
+    if _ENV is None:
+        _ENV = DoublePendulumEnv(render_mode=None, frame_skip=1)
+    return _ENV
+
+
+def _get_ctrl(name):
+    if name not in _CTRL_CACHE:
+        _CTRL_CACHE[name] = make_controller(name, _CFG["ckpt"], _CFG["n_exec"])
+    return _CTRL_CACHE[name]
+
+
+def _run_job(job):
+    """Execute one rollout. Runs in a worker process (or inline if --workers 1)."""
+    cfg = _CFG
+    env = _get_env()
+    ctrl = _get_ctrl(job["controller"])
+    max_tau = float(env.action_space.high[0])
+
+    rng = np.random.default_rng(job["seed"])
+    x0 = make_init_state(job["init_mode"], rng)
+    disturb = make_disturbance(job["kind"], rng, cfg["max_steps"],
+                               cfg["push_force"], cfg["jump_vel"])
+    roll = run_rollout(
+        env, ctrl, job["controller"], x0,
+        max_steps=cfg["max_steps"], dt_control=cfg["dt_control"],
+        hold_steps=cfg["hold_steps"], angle_tol=cfg["angle_tol"],
+        vel_tol=cfg["vel_tol"], obs_noise_std=job["noise_std"],
+        disturb=disturb, rng=rng, max_tau=max_tau)
+    m = compute_metrics(roll)
+    row = {"controller": job["controller"], "condition": job["cond_name"],
+           "rollout": job["rollout_idx"], **m}
+    example = None
+    if job["keep_example"]:
+        example = {"key": (job["controller"], job["cond_name"]),
+                   "t": roll["t"], "x": roll["x"],
+                   "disturb": roll["disturb"], "dt_control": roll["dt_control"]}
+    return row, example
+
+
+def _stable_seed(base, i, cond):
+    """Reproducible per-(rollout, condition) seed (crc32, not hash(), so it is
+    identical across runs and across worker processes)."""
+    return (base + 1000 * i + zlib.crc32(cond.encode()) % 1000) & 0x7FFFFFFF
+
+
+def _progress_str(n, total, row):
+    """One-line per-rollout detail, routed through tqdm.write so it doesn't
+    clobber the live progress bar."""
+    tts = row["time_to_success_s"]
+    tts_s = f"tts={tts:5.2f}s" if tts is not None else "tts=  --  "
+    return (f"[{n:>4}/{total}] {row['controller']:9s} {row['condition']:12s} "
+            f"#{row['rollout']:<2d} success={row['success']} {tts_s} "
+            f"({row['infer_mean_ms']:.0f} ms/step)")
+
+
 # ── main driver ───────────────────────────────────────────────────────────────
 def main():
     p = argparse.ArgumentParser(description=__doc__,
@@ -375,13 +489,14 @@ def main():
                    help="checkpoint filename inside results/ (diffusion)")
     p.add_argument("--n-rollouts", type=int, default=10,
                    help="rollouts (random seeds) per condition")
-    p.add_argument("--max-steps", type=int, default=800)
+    p.add_argument("--max-steps", type=int, default=500)
     p.add_argument("--dt-control", type=float, default=0.05)
     p.add_argument("--hold-steps", type=int, default=40)
     p.add_argument("--angle-tol", type=float, default=0.20)
     p.add_argument("--vel-tol", type=float, default=1.0)
-    p.add_argument("--n-exec", type=int, default=4,
-                   help="diffusion: actions executed per re-plan (cost vs accuracy)")
+    p.add_argument("--n-exec", type=int, default=2,
+                   help="diffusion: actions executed per re-plan (cost vs accuracy; "
+                        "2 holds the top at ~2x speed, 1 is most faithful, >=3 falls)")
     p.add_argument("--push-force", type=float, default=1.0,
                    help="nominal tip-push force magnitude (N)")
     p.add_argument("--jump-vel", type=float, default=4.0,
@@ -393,6 +508,14 @@ def main():
     p.add_argument("--conditions", nargs="*",
                    default=["clean", "push", "random_init", "state_jump"],
                    help="disturbance conditions to run (besides the noise sweep)")
+    p.add_argument("--workers", type=int, default=4,
+                   help="parallel worker PROCESSES (each = its own env+policy). "
+                        "1 = sequential. Try your physical core count.")
+    p.add_argument("--torch-threads", type=int, default=None,
+                   help="Torch threads PER worker (default: 1 when --workers>1, "
+                        "else unrestricted). Keep workers*threads <= cores.")
+    p.add_argument("--quiet", action="store_true",
+                   help="show only the progress bar, suppress per-rollout lines")
     args = p.parse_args()
 
     controllers = ["diffusion", "tvlqr"] if args.controller == "both" else [args.controller]
@@ -408,49 +531,75 @@ def main():
     noise_conditions = {f"noise_{s:g}": ("bottom", None, s) for s in args.noise_levels}
     all_conditions = {**{c: base_specs[c] for c in base_conditions}, **noise_conditions}
 
-    env = DoublePendulumEnv(render_mode=None, frame_skip=1)
-    max_tau = float(env.action_space.high[0])
+    # config every worker needs (besides the per-job fields)
+    cfg = {"ckpt": args.ckpt, "n_exec": args.n_exec, "max_steps": args.max_steps,
+           "dt_control": args.dt_control, "hold_steps": args.hold_steps,
+           "angle_tol": args.angle_tol, "vel_tol": args.vel_tol,
+           "push_force": args.push_force, "jump_vel": args.jump_vel}
 
-    summary = {}
-    per_rollout_rows = []
-    examples = {}                       # (controller, base_condition) -> one rollout
+    # flat list of independent rollouts (the unit of parallelism)
+    jobs = []
+    for ctrl_name in controllers:
+        for cond_name, (init_mode, kind, noise_std) in all_conditions.items():
+            for i in range(args.n_rollouts):
+                jobs.append({
+                    "controller": ctrl_name, "cond_name": cond_name,
+                    "init_mode": init_mode, "kind": kind, "noise_std": noise_std,
+                    "rollout_idx": i, "seed": _stable_seed(args.seed, i, cond_name),
+                    "keep_example": (cond_name in base_specs and i == 0),
+                })
 
+    workers = max(1, args.workers)
+    tthreads = args.torch_threads
+    if tthreads is None:
+        tthreads = 1 if workers > 1 else 0          # 0 = leave Torch default
+    total = len(jobs)
+    print(f"running {total} rollouts on {workers} worker(s) "
+          f"({tthreads or 'default'} torch thread(s) each)\n")
+
+    results = []
+    t_start = time.time()
+    if workers <= 1:
+        _worker_init(cfg, tthreads)                 # set up the single process
+        bar = tqdm(jobs, total=total, desc="rollouts", unit="roll")
+        for job in bar:
+            row, ex = _run_job(job)
+            results.append((row, ex))
+            if not args.quiet:
+                tqdm.write(_progress_str(len(results), total, row))
+    else:
+        # spawn (not fork): a clean interpreter per worker avoids Torch/OpenMP
+        # state being copied across a fork, which can deadlock.
+        ctx = mp.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx,
+                                 initializer=_worker_init,
+                                 initargs=(cfg, tthreads)) as ex_pool:
+            bar = tqdm(ex_pool.map(_run_job, jobs, chunksize=1),
+                       total=total, desc="rollouts", unit="roll")
+            for row, ex in bar:
+                results.append((row, ex))
+                if not args.quiet:
+                    tqdm.write(_progress_str(len(results), total, row))
+
+    # ── reduce: per-rollout rows, example trajectories, per-condition aggregates ─
+    per_rollout_rows = [row for row, _ in results]
+    examples = {ex["key"]: ex for _, ex in results if ex is not None}
+
+    grouped = defaultdict(list)
+    for row in per_rollout_rows:
+        grouped[(row["controller"], row["condition"])].append(row)
+
+    summary = {c: {} for c in controllers}
     for ctrl_name in controllers:
         print(f"\n=== controller: {ctrl_name} ===")
-        ctrl = make_controller(ctrl_name, args.ckpt, args.n_exec)
-        summary[ctrl_name] = {}
-
-        for cond_name, (init_mode, kind, noise_std) in all_conditions.items():
-            rows = []
-            for i in range(args.n_rollouts):
-                # deterministic, condition-independent seed per rollout index
-                rng = np.random.default_rng(
-                    args.seed + 1000 * i + hash(cond_name) % 1000)
-                x0 = make_init_state(init_mode, rng)
-                disturb = make_disturbance(kind, rng, args.max_steps,
-                                           args.push_force, args.jump_vel)
-                roll = run_rollout(
-                    env, ctrl, ctrl_name, x0,
-                    max_steps=args.max_steps, dt_control=args.dt_control,
-                    hold_steps=args.hold_steps, angle_tol=args.angle_tol,
-                    vel_tol=args.vel_tol, obs_noise_std=noise_std,
-                    disturb=disturb, rng=rng, max_tau=max_tau)
-                m = compute_metrics(roll)
-                rows.append(m)
-                per_rollout_rows.append(
-                    {"controller": ctrl_name, "condition": cond_name,
-                     "rollout": i, **m})
-                if cond_name in base_specs and (ctrl_name, cond_name) not in examples:
-                    examples[(ctrl_name, cond_name)] = roll
-
-            agg = aggregate(rows)
+        for cond_name in all_conditions:
+            agg = aggregate(grouped[(ctrl_name, cond_name)])
             summary[ctrl_name][cond_name] = agg
             print(f"  {cond_name:14s} | success {agg['success_rate']*100:5.1f}% "
                   f"| held {agg['held_fraction_mean']:.2f} "
                   f"| smooth(|Δu|) {agg['control_tv_mean']:.4f} "
                   f"| {agg['infer_mean_ms_mean']:.2f} ms/step")
-
-    env.close()
+    print(f"\nwall time: {time.time() - t_start:.1f}s")
 
     # ── write artifacts ───────────────────────────────────────────────────────
     OUT_DIR.mkdir(parents=True, exist_ok=True)
