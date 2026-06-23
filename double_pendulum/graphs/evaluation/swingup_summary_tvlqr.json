@@ -1,8 +1,0 @@
-{
-  "controller": "tvlqr",
-  "success": true,
-  "success_step": 75,
-  "time_to_success_s": 3.75,
-  "hold_steps_required": 40,
-  "total_steps": 540
-}

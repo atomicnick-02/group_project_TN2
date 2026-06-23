@@ -75,12 +75,20 @@ def parse_goal(s):
 
 
 # ── goal-conditioned sampling (reuses the controller's exact normalization) ───
-def sample_chunk(ctrl, hist_feats, goal_state):
-    """One deterministic action chunk (H, nu) for a (k, nx_feat) history + goal."""
+def sample_chunk(ctrl, hist_feats, goal_state, seed=None):
+    """One deterministic action chunk (H, nu) for a (k, nx_feat) history + goal.
+
+    DDPM sampling starts from RANDOM latent noise even with stochastic=False, so
+    two calls with the same goal differ by that noise. Pass `seed` to fix the
+    latent draw -> then the ONLY thing that varies between two calls is the goal,
+    which is what we want when measuring the goal's influence.
+    """
     cond = hist_feats.reshape(-1)
     if ctrl.use_goal:
         cond = np.concatenate([cond, ctrl._norm_s(np.asarray(goal_state, np.float32))])
     cond_t = ctrl.torch.from_numpy(cond[None].astype(np.float32))
+    if seed is not None:
+        ctrl.torch.manual_seed(seed)
     with ctrl.torch.no_grad():
         a = ctrl.policy.sample(cond_t, stochastic=False).cpu().numpy()[0]   # (H, nu) normed
     return ctrl._denorm_a(a)
@@ -121,20 +129,23 @@ def action_sensitivity(ctrl, goals):
         "near-up  [pi-.1,0,0,0]": np.array([np.pi - 0.1, 0.0, 0.0, 0.0], np.float32),
     }
     names = list(goals.keys())
-    print("\n=== A. Action sensitivity to the goal (deterministic sampling) ===")
-    print("    mean |Δaction| over the H-step chunk, between goal pairs.")
-    print("    ~0  => the goal is IGNORED (single-goal policy).\n")
+    print("\n=== A. Action sensitivity to the goal (shared latent noise) ===")
+    print("    mean |Δaction| (Nm) over the H-step chunk, between goal pairs,")
+    print("    with the diffusion latent FIXED so only the goal differs.")
+    print(f"    Reference: full torque range is +-{0.1:.2f} Nm.")
+    print("    |Δa| ~0 vs the torque range => the goal is IGNORED.\n")
+    SEED = 0
     for pname, pstate in probes.items():
         hist = np.repeat(ctrl._norm_s(pstate)[None], ctrl.k, axis=0)
-        chunks = {g: sample_chunk(ctrl, hist, goals[g]) for g in names}
+        chunks = {g: sample_chunk(ctrl, hist, goals[g], seed=SEED) for g in names}
         print(f"  state {pname}")
-        # self-baseline: re-sampling the SAME goal (deterministic -> should be 0)
-        base = np.mean(np.abs(chunks[names[0]] - sample_chunk(ctrl, hist, goals[names[0]])))
-        print(f"    (re-sample same goal, sanity ~0): {base:.4e}")
+        # sanity: same goal + same latent seed -> EXACTLY 0
+        base = np.mean(np.abs(chunks[names[0]] - sample_chunk(ctrl, hist, goals[names[0]], seed=SEED)))
+        print(f"    (same goal, same latent -> 0): {base:.2e}")
         for i in range(len(names)):
             for j in range(i + 1, len(names)):
                 d = float(np.mean(np.abs(chunks[names[i]] - chunks[names[j]])))
-                print(f"    |Δa| {names[i]:18s} vs {names[j]:18s} = {d:.4e}")
+                print(f"    |Δa| {names[i]:18s} vs {names[j]:18s} = {d:.2e} Nm")
         print()
 
 
@@ -175,8 +186,9 @@ def plot(trajs):
             ax.set_xlabel("t (s)"); ax.grid(True); ax.legend(fontsize=8)
             if r == 0:
                 ax.set_title(f"goal: {gname}")
-    fig.suptitle("Goal-conditioned rollouts: actual joint angles vs commanded goal\n"
-                 "(if every column converges to q1=±π, q2=0, the goal is ignored)")
+    fig.suptitle("Goal-conditioned rollouts: actual joint angles vs commanded goal (red)\n"
+                 "(goal works only if each column tracks its OWN red line; here only the "
+                 "trained [pi,0] is reached, others just fail)")
     fig.tight_layout()
     out = OUT_DIR / "goal_conditioning.png"
     fig.savefig(out, dpi=130); plt.close(fig)
@@ -212,11 +224,15 @@ def main():
         trajs = rollout_experiment(ctrl, goals, args.max_steps, args.dt_control)
         plot(trajs)
 
-    print("\nInterpretation: tiny |Δaction| across goals AND every rollout ending "
-          "at the same upright => the goal is ignored. To make the policy actually "
-          "conditionable you must VARY the goal in training: generate demos that "
-          "reach each optimum and set each sample's goal feature from its own "
-          "target (not the single constant X_GOAL), then retrain.")
+    print("\nInterpretation: the goal barely changes the action (<~0.04 Nm of a "
+          "0.1 Nm range), and only the TRAINED optimum [pi,0] is actually reached "
+          "-- the other commanded goals are NOT steered to their targets, they just "
+          "fail. So the goal input provides no useful conditioning (it was a constant "
+          "in training). To make the policy conditionable you must VARY the goal in "
+          "training: generate demos that reach each optimum and set each sample's "
+          "goal feature from its OWN target (not the single constant X_GOAL), then "
+          "retrain. Note [pi/2,-pi/2] is not a zero-torque equilibrium and is at the "
+          "actuator limit, so it likely can't be held even after retraining.")
 
 
 if __name__ == "__main__":

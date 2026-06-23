@@ -489,12 +489,12 @@ def main():
                    help="checkpoint filename inside results/ (diffusion)")
     p.add_argument("--n-rollouts", type=int, default=10,
                    help="rollouts (random seeds) per condition")
-    p.add_argument("--max-steps", type=int, default=500)
+    p.add_argument("--max-steps", type=int, default=300)
     p.add_argument("--dt-control", type=float, default=0.05)
     p.add_argument("--hold-steps", type=int, default=40)
     p.add_argument("--angle-tol", type=float, default=0.20)
     p.add_argument("--vel-tol", type=float, default=1.0)
-    p.add_argument("--n-exec", type=int, default=2,
+    p.add_argument("--n-exec", type=int, default=3,
                    help="diffusion: actions executed per re-plan (cost vs accuracy; "
                         "2 holds the top at ~2x speed, 1 is most faithful, >=3 falls)")
     p.add_argument("--push-force", type=float, default=1.0,
