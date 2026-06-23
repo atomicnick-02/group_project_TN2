@@ -74,7 +74,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from simulation import DoublePendulumEnv
+from double_pendulum_environment import DoublePendulumEnv
 # Reuse the EXACT controllers used by the interactive viewer so the headless
 # numbers correspond to what you watch on screen.
 from visualize_swingup import DiffusionController, TVLQRController, wrap_to_pi

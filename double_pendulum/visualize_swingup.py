@@ -46,7 +46,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from simulation import DoublePendulumEnv
+from double_pendulum_environment import DoublePendulumEnv
 
 current_dir = Path(__file__).resolve().parent
 results_dir = current_dir / "results"

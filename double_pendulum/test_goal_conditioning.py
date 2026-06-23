@@ -47,7 +47,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from simulation import DoublePendulumEnv
+from double_pendulum_environment import DoublePendulumEnv
 from visualize_swingup import DiffusionController, wrap_to_pi
 
 results_dir = _HERE / "results"
