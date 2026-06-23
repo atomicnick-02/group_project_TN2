@@ -12,16 +12,6 @@ WHICH MODEL (and why it changed):
     generate_k.rollout_tvlqr, so every (state, action) pair is dynamically valid
     for the notebook model BY CONSTRUCTION.
 
-    The previous version rolled out in MuJoCo (dp.xml) instead. That is a
-    DIFFERENT plant: dp.xml specifies link inertia about the COM (MuJoCo then
-    adds the parallel-axis term) whereas the notebook uses the inertia directly
-    about the joint; dp.xml's dry friction is constraint-based `frictionloss`,
-    not the notebook's `b*qd + mu*arctan(100*qd)`; and its actuator ctrlrange is
-    0.10 Nm, not the reference's 0.07. It also imported a helper
-    (`apply_coulomb_friction`) that does not exist in simulation.py, so it could
-    not even run. Training on MuJoCo-model data would teach a policy a plant the
-    notebook never describes -- this file fixes that.
-
 DAgger detail: on a fraction of the swing-up rollouts we inject state noise for
     coverage of the off-nominal states the controller must recover from, but we
     LOG the CLEAN commanded torque as the supervised target. The noise latches
@@ -54,12 +44,12 @@ from pathlib import Path
 import numpy as np
 import h5py
 
-from generate_k import P, rollout_tvlqr, wrap_to_pi
+from rollout_tvlqr import P, rollout_tvlqr, wrap_to_pi
 
 current_dir = Path(__file__).resolve().parent
 results_dir = current_dir / "results"
 
-X_GOAL = np.array([np.pi, 0.0, 0.0, 0.0])
+X_GOAL = np.array([0.0, 0.0, 0.0, 0.0])
 DT_CTRL = 0.05
 
 

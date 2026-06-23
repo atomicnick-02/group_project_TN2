@@ -11,9 +11,13 @@ The diffusion controller rebuilds whatever architecture the checkpoint was
 trained with (MLP or Transformer) automatically -- no manual edits needed.
 
 INTERACTION (native MuJoCo viewer):
-    * Double-click a body (a pendulum link) to select it.
-    * Ctrl + right-drag  -> apply an external FORCE to the selected body.
-    * Ctrl + left-drag   -> apply an external TORQUE.
+    * Click the viewer window to focus it, then push the tip with the keyboard:
+        W / Up arrow  -> +Z        S / Down arrow -> -Z
+        A             -> -X        D              -> +X        Space -> clear
+      NOTE: MuJoCo's viewer reserves the Left/Right arrows for stepping through
+      simulation history, so they never reach this script -- use A / D for the
+      horizontal push (Up/Down arrows are unbound and do work).
+    * Or Ctrl + right-drag for a mouse FORCE / Ctrl + left-drag for a TORQUE.
     * The controller keeps running, so you can shove the pendulum mid-swing and
       watch whether it recovers.
 
@@ -23,8 +27,15 @@ Run from the repo root (so diffusion_models is importable):
 """
 
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import time
 import json
+import select
+import signal
+import termios
+import threading
+import tty
 import argparse
 from pathlib import Path
 
@@ -45,6 +56,81 @@ results_dir = current_dir / "results"
 def wrap_to_pi(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
 
+# ── New Helper for Key Interaction ──────────────────────────────────────────
+class ArrowKeyForce:
+    """
+    Reads arrow keys from the terminal stdin (works in Docker/remote VSCode)
+    AND from the GLFW viewer window as a fallback.
+
+    Terminal arrow keys send ESC sequences: ESC [ A/B/C/D
+    Pendulum swings in XZ plane (hinge axis = Y):
+      Left/Right → force[0] (X)   Up/Down → force[2] (Z)
+    """
+
+    def __init__(self, model, force_magnitude=5):
+        self.force = np.zeros(3)
+        self.mag = force_magnitude
+        self.tip_id = model.nbody - 1
+        self._running = True
+        self._old_term = None
+        t = threading.Thread(target=self._stdin_listener, daemon=True)
+        t.start()
+
+    def _apply(self, axis, sign):
+        self.force[:] = 0.0
+        self.force[axis] = sign * self.mag
+
+    def _stdin_listener(self):
+        fd = sys.stdin.fileno()
+        try:
+            self._old_term = termios.tcgetattr(fd)
+            tty.setraw(fd)
+        except termios.error:
+            return  # stdin is not a tty (e.g. piped input) – skip
+        try:
+            while self._running:
+                if not select.select([sys.stdin], [], [], 0.05)[0]:
+                    continue
+                b = sys.stdin.buffer.read(1)
+                if b == b'\x1b':
+                    # read the rest of the escape sequence with a short timeout
+                    if select.select([sys.stdin], [], [], 0.02)[0]:
+                        b2 = sys.stdin.buffer.read(1)
+                        if b2 == b'[' and select.select([sys.stdin], [], [], 0.02)[0]:
+                            b3 = sys.stdin.buffer.read(1)
+                            if   b3 == b'A': self._apply(2, +1)   # Up    → +Z
+                            elif b3 == b'B': self._apply(2, -1)   # Down  → -Z
+                            elif b3 == b'C': self._apply(0, +1)   # Right → +X
+                            elif b3 == b'D': self._apply(0, -1)   # Left  → -X
+                elif b == b' ':
+                    self.force[:] = 0.0
+                elif b == b'\x03':  # Ctrl+C – restore terminal then re-raise
+                    self.stop()
+                    os.kill(os.getpid(), signal.SIGINT)
+        finally:
+            self.stop()
+
+    def stop(self):
+        self._running = False
+        if self._old_term is not None:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._old_term)
+            except termios.error:
+                pass
+            self._old_term = None
+
+    def key_callback(self, keycode):
+        # Fires when the viewer WINDOW has focus. MuJoCo's built-in simulate UI
+        # consumes Left/Right arrows (history step back/forward) *before* this
+        # callback runs, so those two never arrive here -- use A/D for the
+        # horizontal (X) push. Up/Down arrows are unbound and do pass through.
+        #   GLFW codes: Up 265, Down 264, Right 262, Left 263,
+        #               W 87, S 83, A 65, D 68, Space 32
+        if   keycode in (265, 87): self._apply(2, +1)   # Up   / W → +Z
+        elif keycode in (264, 83): self._apply(2, -1)   # Down / S → -Z
+        elif keycode in (262, 68): self._apply(0, +1)   # Right/ D → +X
+        elif keycode in (263, 65): self._apply(0, -1)   # Left / A → -X
+        elif keycode == 32:        self.force[:] = 0.0  # Space → clear
 
 # ── TVLQR controller (adapted from the reference script) ─────────────────────
 class TVLQRController:
@@ -204,13 +290,12 @@ class DiffusionController:
 
         return self._queue.pop(0)
 
-
-# ── Evaluation loop ──────────────────────────────────────────────────────────
 def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
              max_steps=1200, dt_control=0.05, realtime=True, ckpt="diffusion_policy.pt"):
     env = DoublePendulumEnv(render_mode=None, frame_skip=1)
     obs, _ = env.reset()
-
+    key_handler = ArrowKeyForce(env.model)
+    
     # Force the start state to the hanging-down configuration.
     x0 = np.array([0.0, 0.0, 0.0, 0.0])
     env.data.qpos[:2] = x0[:2]
@@ -225,8 +310,7 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
         ctrl = DiffusionController(
             results_dir / ckpt,
             results_dir / "norm_stats.json",
-            n_exec=1,   # re-plan every step: the unstable upright hold needs tight
-                        # feedback (n_exec=2 lets the error grow ~2x between plans)
+            n_exec=1,
         )
         ctrl.reset(x0)
 
@@ -239,10 +323,19 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
     consecutive_hold = 0
     success_step = None
 
-    print(f"[{controller_name}] swing-up from bottom. "
-          f"Drag the pendulum in the viewer (Ctrl+right-drag = force).")
+    print(f"[{controller_name}] swing-up from bottom.")
+    print("  Click the VIEWER window, then push the tip:")
+    print("    W/Up = +Z   S/Down = -Z   A = -X   D = +X   Space = clear")
+    print("    (MuJoCo reserves Left/Right arrows for history stepping -> use A/D)")
+    print("  Arrow keys in THIS terminal also work while the terminal is focused.")
+    print("  (Ctrl+right-drag in the viewer applies a mouse force too.)")
 
-    with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
+    # The callback MUST be passed into launch_passive: it is handed to the C++
+    # Simulate object at construction. Assigning viewer.key_callback afterwards
+    # is a no-op (the Handle has no such setter), which is why keys did nothing.
+    with mujoco.viewer.launch_passive(
+        env.model, env.data, key_callback=key_handler.key_callback
+    ) as viewer:
         # Match the env's fixed "side" camera instead of the default free view.
         cam_id = mujoco.mj_name2id(env.model, mujoco.mjtObj.mjOBJ_CAMERA, "side")
         if cam_id >= 0:
@@ -250,16 +343,19 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
             viewer.cam.fixedcamid = cam_id
 
         for step in range(max_steps):
+            # 1. Observe the current state
             x = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
-
+            
+            # 2. Compute the control action based on the state
             u = np.asarray(ctrl.action(x), dtype=np.float64).ravel()
             u = np.clip(u, -max_tau, max_tau)
 
+            # 3. Log history
             hist["t"].append(step * dt_control)
             hist["x"].append(x.copy())
             hist["u"].append(u.copy())
 
-            # success check: near upright (angle + velocity) for N consecutive steps
+            # 4. Check for success
             ang_err = abs(wrap_to_pi(x[0] - x_goal[0])) + abs(wrap_to_pi(x[1] - x_goal[1]))
             vel_err = abs(x[2]) + abs(x[3])
             if ang_err < angle_tol and vel_err < vel_tol:
@@ -272,19 +368,28 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
             else:
                 consecutive_hold = 0
 
+            # 5. Apply the control action to the actuator
             env.data.ctrl[:] = u
+            
+            # 6. Step the physics engine forward
             for _ in range(n_sub):
-                # Inject the viewer's mouse perturbation (Ctrl+drag) into the
-                # dynamics. launch_passive hands physics to us, so the drag is
-                # only recorded in viewer.perturb until WE apply it: this writes
-                # the force/torque into data.xfrc_applied, which mj_step consumes.
+                # Clear all applied forces at the start of the substep
+                env.data.xfrc_applied[:] = 0.0
+                
+                # Apply the keyboard force
+                env.data.xfrc_applied[key_handler.tip_id, :3] = key_handler.force
+                
+                # Apply the mouse perturbation (if active)
                 if viewer.perturb.select > 0:
                     mujoco.mjv_applyPerturbForce(env.model, env.data, viewer.perturb)
-                else:
-                    # nothing selected -> clear any leftover applied force,
-                    # otherwise a past drag would keep pushing forever.
-                    env.data.xfrc_applied[:] = 0.0
+                
+                # Advance simulation by one timestep
                 mujoco.mj_step(env.model, env.data)
+            
+            # 7. Clear the impulse force after it has been applied for one step
+            key_handler.force[:] = 0.0
+
+            # 8. Sync the viewer and wait to maintain real-time rate
             viewer.sync()
 
             if realtime:
@@ -293,9 +398,9 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
             if not viewer.is_running():
                 break
 
+    key_handler.stop()
     env.close()
     return _finish(controller_name, hist, success_step, hold_steps)
-
 
 def _finish(name, hist, success_step, hold_steps):
     t = np.array(hist["t"]); x = np.array(hist["x"]); u = np.array(hist["u"])

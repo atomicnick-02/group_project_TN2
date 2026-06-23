@@ -1,5 +1,6 @@
 .vscode
 .urdf
+.pdf
 gripper/assets/ycb/*
 gripper/assets/autodesk/*
 .claude
