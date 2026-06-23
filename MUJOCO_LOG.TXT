@@ -7,3 +7,9 @@ ERROR: could not initialize GLFW
 Fri Jun  5 14:25:32 2026
 ERROR: could not initialize GLFW
 
+Wed Jun 17 18:55:53 2026
+ERROR: could not initialize GLFW
+
+Fri Jun 19 18:57:16 2026
+ERROR: could not initialize GLFW
+

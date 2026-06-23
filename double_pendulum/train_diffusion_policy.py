@@ -45,7 +45,7 @@ CKPT_EVERY   = 20                                    # save a checkpoint every N
 NX, NU       = 4, 2          # raw state dim (from HDF5), action dim
 NX_FEAT      = 6             # feature dim: [sin(q1), cos(q1), sin(q2), cos(q2), dq1, dq2]
 K            = 6             # observation-history length
-H            = 8             # action prediction horizon
+H            = 10             # action prediction horizon
 USE_GOAL     = True          # append goal features to conditioning vector
 X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)  # upright
 
@@ -61,12 +61,12 @@ SEED         = 42
 HOLD_STEPS   = 0
 
 # MLP-specific
-MLP_HIDDEN   = 256
+MLP_HIDDEN   = 512
 
 # Transformer-specific
-TF_D_MODEL   = 128
+TF_D_MODEL   = 192
 TF_HEADS     = 4
-TF_LAYERS    = 3
+TF_LAYERS    = 5
 TF_FF        = 256
 TF_DROPOUT   = 0.0
 

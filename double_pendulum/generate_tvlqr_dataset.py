@@ -29,6 +29,16 @@ DAgger detail: on a fraction of the swing-up rollouts we inject state noise for
     fragile hold stays clean and the rollout still succeeds -- we keep the noisy
     swing-up recovery states without sacrificing the hold.
 
+BOTH SIDES: the committed reference swings up in ONE rotational direction, so on
+    its own it teaches a left/right-biased policy. We exploit the plant's
+    left-right reflection symmetry -- for this pendulum (cos/sin kinematics,
+    friction odd in velocity) (x(t), u(t)) valid => (-x(t), -u(t)) valid -- to
+    ALSO roll out the mirrored reference (-x_ref, -u_ref) from mirrored starts,
+    swinging up to the SAME upright from the other side. The TVLQR gains K are
+    reused unchanged: linearizing about -x_ref gives the same (A, B), hence the
+    same Riccati solution. Episodes alternate between the two sides so the kept
+    set is left-right balanced; each rollout records a "side" attribute (+1/-1).
+
 Output: results/expert_trajectories.h5 with groups traj_*, each holding
     states  (T, 4) and actions (T, 2)  -- the SAME format
     train_diffusion_policy.py already consumes, so nothing downstream changes.
@@ -59,6 +69,19 @@ def load_reference():
     u_ref = np.loadtxt(results_dir / "inputs.csv", delimiter=",", skiprows=1)
     K = np.load(results_dir / "K_matrix.npy")
     return x_ref, u_ref, K
+
+
+def mirror(x_ref, u_ref):
+    """
+    Reflect a reference across the pendulum's left-right symmetry.
+
+    For this symmetric plant (cos/sin kinematics, friction odd in velocity) the
+    dynamics satisfy f(-x, -u) = -f(x, u), so (x(t), u(t)) valid implies
+    (-x(t), -u(t)) valid -- a swing-up to the SAME upright from the other side.
+    The TVLQR gains K need NO change: A, B are identical at the mirrored point,
+    so the Riccati solution (hence K) is the same -- reuse the original K.
+    """
+    return -np.asarray(x_ref), -np.asarray(u_ref)
 
 
 def sample_x0(rng):
@@ -109,17 +132,40 @@ def main():
             "       trajectory.csv + inputs.csv + K_matrix.npy produced by\n"
             "       generate_k.py. Re-run `python generate_k.py` (or restore the\n"
             "       committed versions with git checkout) before generating data.")
-    print("Reference self-check: swing-up + hold OK in the notebook model. "
+    print("Reference self-check: swing-up + hold OK in the notebook model.")
+
+    # ── Guard: confirm the MIRRORED reference also swings up & holds. By the
+    #    reflection symmetry it should always pass (the model is symmetric and
+    #    RK4 of an odd ODE stays odd); checking it here catches any model
+    #    asymmetry before we generate a whole side's worth of bad data. ──
+    x_ref_m, u_ref_m = mirror(x_ref, u_ref)
+    _, _, ok_m = rollout_tvlqr(x_ref_m, u_ref_m, K, np.zeros(4), args.episode_steps)
+    if not ok_m:
+        raise SystemExit(
+            "ABORT: the MIRRORED TVLQR reference does not swing up and hold in\n"
+            "       the notebook model, so the plant is not left-right symmetric\n"
+            "       and both-sides reflection augmentation is invalid here.")
+    print("Mirror self-check: swing-up + hold OK from the other side too. "
           "Generating rollouts...")
 
     kept = 0
+    swing_sides = {1: 0, -1: 0}
     with h5py.File(args.out, "w") as f:
         for ep in range(args.n_episodes):
+            # Alternate the swing-up direction: even episodes track the committed
+            # reference, odd episodes track its mirror (-x_ref, -u_ref) so the
+            # policy sees swing-ups to the SAME upright from BOTH sides. Same K.
+            side = 1 if ep % 2 == 0 else -1
+            xr, ur = (x_ref, u_ref) if side == 1 else mirror(x_ref, u_ref)
+
             x0 = np.zeros(4) if ep == 0 else sample_x0(rng)
-            # Mix clean and noisy rollouts; noise latches off at the top.
-            noise = None if ep % 4 == 0 else args.noise_std
+            if side == -1:
+                x0 = -x0                       # mirror the start to match the ref
+            # Mix clean and noisy rollouts (~1 in 4 clean), balanced across sides
+            # by keying the clean cadence on the side-pair index, not raw ep.
+            noise = None if (ep // 2) % 4 == 0 else args.noise_std
             s, a, ok = rollout_tvlqr(
-                x_ref, u_ref, K, x0, args.episode_steps,
+                xr, ur, K, x0, args.episode_steps,
                 dt_control=DT_CTRL, noise_std=noise, rng=rng,
                 noise_until_upright=True)
             if not ok:
@@ -129,17 +175,28 @@ def main():
             grp.create_dataset("actions", data=a.astype(np.float64))
             grp.attrs["x0"] = x0
             grp.attrs["noise_std"] = 0.0 if noise is None else noise
+            grp.attrs["side"] = side
             kept += 1
+            swing_sides[side] += 1
             if (ep + 1) % 50 == 0:
-                print(f"  {ep+1}/{args.n_episodes} episodes, {kept} kept")
+                print(f"  {ep+1}/{args.n_episodes} episodes, {kept} kept "
+                      f"(+side {swing_sides[1]} / -side {swing_sides[-1]})")
         swing_kept = kept
-        print(f"Swing-up rollouts: {swing_kept} kept. "
+        print(f"Swing-up rollouts: {swing_kept} kept "
+              f"(+side {swing_sides[1]}, -side {swing_sides[-1]}). "
               "Generating upright-hold rollouts...")
 
         # ── Upright-hold rollouts: teach the stabilizing gain around the top. ──
-        for _ in range(args.n_hold):
+        # Alternate sides too: -side perturbs around the q1=-pi representation of
+        # the SAME upright, balancing the deviation->corrective-torque coverage.
+        hold_sides = {1: 0, -1: 0}
+        for i in range(args.n_hold):
+            side = 1 if i % 2 == 0 else -1
+            xr, ur = (x_ref, u_ref) if side == 1 else mirror(x_ref, u_ref)
             x0 = sample_upright_x0(rng)
-            s, a, ok = rollout_tvlqr(x_ref, u_ref, K, x0, args.hold_steps,
+            if side == -1:
+                x0 = -x0
+            s, a, ok = rollout_tvlqr(xr, ur, K, x0, args.hold_steps,
                                      dt_control=DT_CTRL)        # no noise
             if not ok:
                 continue
@@ -149,12 +206,16 @@ def main():
             grp.attrs["x0"] = x0
             grp.attrs["noise_std"] = 0.0
             grp.attrs["kind"] = "hold"
+            grp.attrs["side"] = side
             kept += 1
+            hold_sides[side] += 1
 
     n_swing_samples = swing_kept * args.episode_steps
     n_hold_samples  = (kept - swing_kept) * args.hold_steps
     print(f"\nDone! Saved {kept} rollouts to {args.out} "
           f"({swing_kept} swing-up + {kept - swing_kept} hold).")
+    print(f"  sides -- swing-up: +{swing_sides[1]}/-{swing_sides[-1]}, "
+          f"hold: +{hold_sides[1]}/-{hold_sides[-1]}.")
     print(f"~{n_swing_samples + n_hold_samples} (state, action) samples "
           f"(~{n_hold_samples} from the hold regime).")
 
