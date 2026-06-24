@@ -29,9 +29,13 @@ BOTH SIDES: the committed reference swings up in ONE rotational direction, so on
     same Riccati solution. Episodes alternate between the two sides so the kept
     set is left-right balanced; each rollout records a "side" attribute (+1/-1).
 
-Output: results/expert_trajectories.h5 with groups traj_*, each holding
+Output: results/expert_trajectories_*.h5 with groups traj_*, each holding
     states  (T, 4) and actions (T, 2)  -- the SAME format
     train_diffusion_policy.py already consumes, so nothing downstream changes.
+    The filename records the dataset's composition: --mode {swingup,both} chooses
+    swing-up only vs swing-up + upright-hold, and --mirror/--no-mirror chooses
+    whether mirrored (both-sides) trajectories are included --
+    e.g. expert_trajectories_swingup_hold_mirrored.h5.
 
 The controller uses the committed, working reference (trajectory.csv, inputs.csv,
 K_matrix.npy) produced by generate_k.py. A self-check aborts if that reference on
@@ -91,12 +95,31 @@ def sample_upright_x0(rng):
                      rng.uniform(-1.0, 1.0), rng.uniform(-1.0, 1.0)])
 
 
+def make_out_path(mode, mirror):
+    """Derive the output filename so it records the dataset's composition.
+
+    Base name expert_trajectories.h5 gains suffixes for the chosen content
+    (swingup vs swingup_hold) and whether mirrored trajectories are included
+    (mirrored vs singleside), e.g. expert_trajectories_swingup_hold_mirrored.h5.
+    """
+    content = "swingup" if mode == "swingup" else "swingup_hold"
+    mir = "mirrored" if mirror else "singleside"
+    return results_dir / f"expert_trajectories_{content}_{mir}.h5"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-episodes", type=int, default=500)
+    ap.add_argument("--mode", choices=["swingup", "both"], default="both",
+                    help="'swingup' = swing-up rollouts only; 'both' = swing-up"
+                         " rollouts plus the upright-hold rollouts")
+    ap.add_argument("--mirror", action=argparse.BooleanOptionalAction, default=True,
+                    help="include mirrored (-x_ref, -u_ref) trajectories so the"
+                         " policy swings up from BOTH sides; --no-mirror keeps only"
+                         " the committed reference's side")
     ap.add_argument("--n-hold", type=int, default=200,
                     help="extra rollouts started perturbed around upright, to teach"
-                         " the stabilizing (deviation->torque) gain")
+                         " the stabilizing (deviation->torque) gain (mode=both only)")
     ap.add_argument("--hold-steps", type=int, default=60,   # 60*0.05 = 3 s
                     help="length of each upright-hold rollout")
     ap.add_argument("--episode-steps", type=int, default=120)   # 120*0.05 = 6 s
@@ -104,8 +127,13 @@ def main():
                     help="swing-up-phase state-noise std (DAgger coverage); latches"
                          " off once upright is reached so the hold stays clean")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", default=str(results_dir / "expert_trajectories{}.h5"))
+    ap.add_argument("--out", default=None,
+                    help="output .h5 path; if omitted, derived from --mode/--mirror"
+                         " (e.g. expert_trajectories_swingup_hold_mirrored.h5)")
     args = ap.parse_args()
+
+    include_hold = args.mode == "both"
+    out_path = Path(args.out) if args.out else make_out_path(args.mode, args.mirror)
 
     rng = np.random.default_rng(args.seed)
     x_ref, u_ref, K = load_reference()
@@ -127,33 +155,46 @@ def main():
     # ── Guard: confirm the MIRRORED reference also swings up & holds. By the
     #    reflection symmetry it should always pass (the model is symmetric and
     #    RK4 of an odd ODE stays odd); checking it here catches any model
-    #    asymmetry before we generate a whole side's worth of bad data. ──
-    x_ref_m, u_ref_m = mirror(x_ref, u_ref)
-    _, _, ok_m = rollout_tvlqr(x_ref_m, u_ref_m, K, np.zeros(4), args.episode_steps)
-    if not ok_m:
-        raise SystemExit(
-            "ABORT: the MIRRORED TVLQR reference does not swing up and hold in\n"
-            "       the notebook model, so the plant is not left-right symmetric\n"
-            "       and both-sides reflection augmentation is invalid here.")
-    print("Mirror self-check: swing-up + hold OK from the other side too. "
-          "Generating rollouts...")
+    #    asymmetry before we generate a whole side's worth of bad data. Only
+    #    relevant when mirrored trajectories are actually included. ──
+    if args.mirror:
+        x_ref_m, u_ref_m = mirror(x_ref, u_ref)
+        _, _, ok_m = rollout_tvlqr(x_ref_m, u_ref_m, K, np.zeros(4),
+                                   args.episode_steps)
+        if not ok_m:
+            raise SystemExit(
+                "ABORT: the MIRRORED TVLQR reference does not swing up and hold in\n"
+                "       the notebook model, so the plant is not left-right symmetric\n"
+                "       and both-sides reflection augmentation is invalid here.")
+        print("Mirror self-check: swing-up + hold OK from the other side too. "
+              "Generating rollouts...")
+    else:
+        print("Mirroring disabled (--no-mirror): single-side dataset. "
+              "Generating rollouts...")
 
     kept = 0
     swing_sides = {1: 0, -1: 0}
-    with h5py.File(args.out, "w") as f:
+    hold_sides = {1: 0, -1: 0}
+    with h5py.File(out_path, "w") as f:
         for ep in range(args.n_episodes):
-            # Alternate the swing-up direction: even episodes track the committed
-            # reference, odd episodes track its mirror (-x_ref, -u_ref) so the
-            # policy sees swing-ups to the SAME upright from BOTH sides. Same K.
-            side = 1 if ep % 2 == 0 else -1
+            # Alternate the swing-up direction when mirroring: even episodes track
+            # the committed reference, odd episodes track its mirror (-x_ref,
+            # -u_ref) so the policy sees swing-ups to the SAME upright from BOTH
+            # sides (same K). With --no-mirror every episode stays on side +1.
+            if args.mirror:
+                side = 1 if ep % 2 == 0 else -1
+                clean_key = ep // 2     # key clean cadence on the side-pair index
+            else:
+                side = 1
+                clean_key = ep          # no pairing -> key on the raw episode
             xr, ur = (x_ref, u_ref) if side == 1 else mirror(x_ref, u_ref)
 
             x0 = np.zeros(4) if ep == 0 else sample_x0(rng)
             if side == -1:
                 x0 = -x0                       # mirror the start to match the ref
             # Mix clean and noisy rollouts (~1 in 4 clean), balanced across sides
-            # by keying the clean cadence on the side-pair index, not raw ep.
-            noise = None if (ep // 2) % 4 == 0 else args.noise_std
+            # by keying the clean cadence on clean_key, not raw ep.
+            noise = None if clean_key % 4 == 0 else args.noise_std
             s, a, ok = rollout_tvlqr(
                 xr, ur, K, x0, args.episode_steps,
                 dt_control=DT_CTRL, noise_std=noise, rng=rng,
@@ -172,37 +213,42 @@ def main():
                 print(f"  {ep+1}/{args.n_episodes} episodes, {kept} kept "
                       f"(+side {swing_sides[1]} / -side {swing_sides[-1]})")
         swing_kept = kept
-        print(f"Swing-up rollouts: {swing_kept} kept "
-              f"(+side {swing_sides[1]}, -side {swing_sides[-1]}). "
-              "Generating upright-hold rollouts...")
+        if include_hold:
+            print(f"Swing-up rollouts: {swing_kept} kept "
+                  f"(+side {swing_sides[1]}, -side {swing_sides[-1]}). "
+                  "Generating upright-hold rollouts...")
 
-        # ── Upright-hold rollouts: teach the stabilizing gain around the top. ──
-        # Alternate sides too: -side perturbs around the q1=-pi representation of
-        # the SAME upright, balancing the deviation->corrective-torque coverage.
-        hold_sides = {1: 0, -1: 0}
-        for i in range(args.n_hold):
-            side = 1 if i % 2 == 0 else -1
-            xr, ur = (x_ref, u_ref) if side == 1 else mirror(x_ref, u_ref)
-            x0 = sample_upright_x0(rng)
-            if side == -1:
-                x0 = -x0
-            s, a, ok = rollout_tvlqr(xr, ur, K, x0, args.hold_steps,
-                                     dt_control=DT_CTRL)        # no noise
-            if not ok:
-                continue
-            grp = f.create_group(f"traj_{kept}")
-            grp.create_dataset("states",  data=s.astype(np.float64))
-            grp.create_dataset("actions", data=a.astype(np.float64))
-            grp.attrs["x0"] = x0
-            grp.attrs["noise_std"] = 0.0
-            grp.attrs["kind"] = "hold"
-            grp.attrs["side"] = side
-            kept += 1
-            hold_sides[side] += 1
+            # ── Upright-hold rollouts: teach the stabilizing gain around the top.
+            # Alternate sides when mirroring: -side perturbs around the q1=-pi
+            # representation of the SAME upright, balancing the
+            # deviation->corrective-torque coverage. With --no-mirror, side +1. ──
+            for i in range(args.n_hold):
+                side = (1 if i % 2 == 0 else -1) if args.mirror else 1
+                xr, ur = (x_ref, u_ref) if side == 1 else mirror(x_ref, u_ref)
+                x0 = sample_upright_x0(rng)
+                if side == -1:
+                    x0 = -x0
+                s, a, ok = rollout_tvlqr(xr, ur, K, x0, args.hold_steps,
+                                         dt_control=DT_CTRL)        # no noise
+                if not ok:
+                    continue
+                grp = f.create_group(f"traj_{kept}")
+                grp.create_dataset("states",  data=s.astype(np.float64))
+                grp.create_dataset("actions", data=a.astype(np.float64))
+                grp.attrs["x0"] = x0
+                grp.attrs["noise_std"] = 0.0
+                grp.attrs["kind"] = "hold"
+                grp.attrs["side"] = side
+                kept += 1
+                hold_sides[side] += 1
+        else:
+            print(f"Swing-up rollouts: {swing_kept} kept "
+                  f"(+side {swing_sides[1]}, -side {swing_sides[-1]}). "
+                  "Skipping upright-hold rollouts (mode=swingup).")
 
     n_swing_samples = swing_kept * args.episode_steps
     n_hold_samples  = (kept - swing_kept) * args.hold_steps
-    print(f"\nDone! Saved {kept} rollouts to {args.out} "
+    print(f"\nDone! Saved {kept} rollouts to {out_path} "
           f"({swing_kept} swing-up + {kept - swing_kept} hold).")
     print(f"  sides -- swing-up: +{swing_sides[1]}/-{swing_sides[-1]}, "
           f"hold: +{hold_sides[1]}/-{hold_sides[-1]}.")
