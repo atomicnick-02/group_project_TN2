@@ -2,10 +2,7 @@
 Interactive swing-up evaluation for the double pendulum.
 
 Starts the pendulum hanging at the bottom [0,0,0,0] and tries to swing it up to
-upright [pi,0,0,0], holding there. Two controllers are selectable:
-
-    --controller diffusion   # the trained Diffusion Policy checkpoint
-    --controller tvlqr        # the TVLQR trajectory-tracking baseline
+upright [pi,0,0,0], holding there, using the trained Diffusion Policy checkpoint.
 
 The diffusion controller rebuilds whatever architecture the checkpoint was
 trained with (MLP or Transformer) automatically -- no manual edits needed.
@@ -22,8 +19,7 @@ INTERACTION (native MuJoCo viewer):
       watch whether it recovers.
 
 Run from the repo root (so diffusion_models is importable):
-    python double_pendulum/evaluate_swingup.py --controller diffusion
-    python double_pendulum/evaluate_swingup.py --controller tvlqr
+    python double_pendulum/evaluate_swingup.py
 """
 
 import os
@@ -134,64 +130,6 @@ class ArrowKeyForce:
         elif keycode in (263, 65): self._apply(0, -1)   # Left / A → -X
         elif keycode == 32:        self.force[:] = 0.0  # Space → clear
 
-# ── TVLQR controller (adapted from the reference script) ─────────────────────
-class TVLQRController:
-    """Trajectory-tracking baseline with deviation-triggered recovery."""
-
-    DEVIATION_THRESHOLD = 2.0
-
-    def __init__(self):
-        self.x_ref = np.loadtxt(results_dir / "trajectory.csv", delimiter=",", skiprows=1).T
-        self.u_ref = np.loadtxt(results_dir / "inputs.csv", delimiter=",", skiprows=1).T
-        self.K     = np.load(results_dir / "K_matrix.npy")
-        self.max_idx     = self.x_ref.shape[1] - 1
-        self.current_idx = 0
-
-    @staticmethod
-    def _feat(x, v_scale=0.1):
-        if x.ndim == 1:
-            p0, p1 = x[0], x[1]
-            v = x[2:] * v_scale
-            return np.concatenate(([np.cos(p0), np.sin(p0), np.cos(p1), np.sin(p1)], v))
-        p0, p1 = x[0, :], x[1, :]
-        v = x[2:, :] * v_scale
-        return np.vstack((np.cos(p0), np.sin(p0), np.cos(p1), np.sin(p1), v))
-
-    def _ranked(self, x, ref, k=1):
-        diff  = self._feat(ref) - self._feat(x).reshape(-1, 1)
-        dists = np.linalg.norm(diff, axis=0)
-        order = np.argsort(dists)
-        return order[:k], dists[order[:k]]
-
-    def _K_weighted(self, x, k=5):
-        idx, dists = self._ranked(x, self.x_ref, k=k)
-        w = 1.0 / (dists + 1e-6)
-        w = w / w.sum()
-        Ks = self.K[np.clip(idx, 0, len(self.K) - 1)]
-        return np.sum(w[:, None, None] * Ks, axis=0)
-
-    def reset(self):
-        self.current_idx = 0
-
-    def action(self, x):
-        target = self.x_ref[:, self.current_idx].reshape(4, 1)
-        _, d = self._ranked(x, target, k=1)
-        holding = self.current_idx >= self.max_idx
-        if d[0] > self.DEVIATION_THRESHOLD or holding:
-            best, _ = self._ranked(x, self.x_ref, k=1)
-            idx = best[0]
-            K = self._K_weighted(x, k=5)
-        else:
-            idx = self.current_idx
-            K = self.K[idx]
-            self.current_idx += 1
-
-        x_des, u_des = self.x_ref[:, idx], self.u_ref[:, idx]
-        err = x - x_des
-        err[0], err[1] = wrap_to_pi(err[0]), wrap_to_pi(err[1])
-        return u_des - K @ err
-
-
 # ── Diffusion-policy controller ──────────────────────────────────────────────
 class DiffusionController:
     """
@@ -292,12 +230,13 @@ class DiffusionController:
 
         return self._queue.pop(0)
 
-def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
+def evaluate(hold_steps=40, angle_tol=0.20, vel_tol=1.0,
              max_steps=1200, dt_control=0.05, realtime=True, ckpt="diffusion_policy.pt"):
+    controller_name = "diffusion"
     env = DoublePendulumEnv(render_mode=None, frame_skip=1)
     obs, _ = env.reset()
     key_handler = ArrowKeyForce(env.model)
-    
+
     # Force the start state to the hanging-down configuration.
     x0 = np.array([0.0, 0.0, 0.0, 0.0])
     env.data.qpos[:2] = x0[:2]
@@ -305,16 +244,13 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
     mujoco.mj_forward(env.model, env.data)
     obs = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
 
-    # Build the chosen controller.
-    if controller_name == "tvlqr":
-        ctrl = TVLQRController(); ctrl.reset()
-    else:
-        ctrl = DiffusionController(
-            results_dir / ckpt,
-            results_dir / "norm_stats.json",
-            n_exec=1,
-        )
-        ctrl.reset(x0)
+    # Build the diffusion-policy controller.
+    ctrl = DiffusionController(
+        results_dir / ckpt,
+        results_dir / "norm_stats.json",
+        n_exec=1,
+    )
+    ctrl.reset(x0)
 
     dt_sim   = env.model.opt.timestep
     n_sub    = max(1, int(round(dt_control / dt_sim)))
@@ -448,9 +384,8 @@ def _finish(name, hist, success_step, hold_steps):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--controller", choices=["diffusion", "tvlqr"], default="diffusion")
     p.add_argument("--ckpt", default="diffusion_policy.pt",
-                   help="checkpoint filename inside results/ (diffusion only)")
+                   help="checkpoint filename inside results/")
     p.add_argument("--hold-steps", type=int, default=40,
                    help="consecutive in-tolerance control steps to count as success")
     p.add_argument("--angle-tol", type=float, default=0.20)
@@ -461,7 +396,6 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     evaluate(
-        controller_name=args.controller,
         hold_steps=args.hold_steps,
         angle_tol=args.angle_tol,
         vel_tol=args.vel_tol,

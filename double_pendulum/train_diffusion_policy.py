@@ -37,7 +37,9 @@ from diffusion_models.diffusion_policy import (
 
 
 # ── Config (defaults; some overridable via CLI) ──────────────────────────────
-H5_PATH      = "double_pendulum/results/expert_trajectories.h5"
+# H5_PATH      = "double_pendulum/results/expert_trajectories.h5"
+H5_PATH      = "double_pendulum/optimal_trajectories/expert_trajectories_kux_swingup_hold_mirrored.h5"
+
 OUT_DIR      = "double_pendulum/results"
 CKPT_PATH    = os.path.join(OUT_DIR, "diffusion_policy.pt")
 STATS_PATH   = os.path.join(OUT_DIR, "norm_stats.json")
@@ -52,10 +54,11 @@ USE_GOAL     = True          # append goal features to conditioning vector
 X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)  # upright
 
 TIMESTEPS    = 100
-EPOCHS       = 200
-BATCH_SIZE   = 256
+EPOCHS       = 60
+BATCH_SIZE   = 512
 LR           = 1e-4
 SEED         = 42
+
 # Real upright-hold rollouts now come from generate_tvlqr_dataset.py (--n-hold),
 # which capture the deviation->corrective-torque map. The old synthetic hack just
 # repeated each trajectory's final state/action, teaching the exact fixed point
@@ -70,7 +73,7 @@ TF_D_MODEL   = 192
 TF_HEADS     = 4
 TF_LAYERS    = 5
 TF_FF        = 256
-TF_DROPOUT   = 0.0
+TF_DROPOUT   = 0.2
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -95,12 +98,19 @@ class DiffusionPolicyDataset(Dataset):
                 grp = f[key]
                 states  = np.asarray(grp["states"],  dtype=np.float32)
                 actions = np.asarray(grp["actions"], dtype=np.float32)
-                trajs.append((states, actions))
+                # Per-trajectory goal: prefer the optimum THIS demo was generated
+                # for (stored in the HDF5 `xgoal` attr) so the goal feature varies
+                # across the dataset. Fall back to the global x_goal if absent.
+                if "xgoal" in grp.attrs:
+                    goal = np.asarray(grp.attrs["xgoal"], dtype=np.float32)
+                else:
+                    goal = self.x_goal
+                trajs.append((states, actions, goal))
         if not trajs:
             raise RuntimeError(f"No trajectories found in {h5_path}")
 
-        all_vels    = np.concatenate([s[:, 2:] for s, _ in trajs], axis=0)
-        all_actions = np.concatenate([a for _, a in trajs], axis=0)
+        all_vels    = np.concatenate([s[:, 2:] for s, _, _ in trajs], axis=0)
+        all_actions = np.concatenate([a for _, a, _ in trajs], axis=0)
         self.vel_min,    self.vel_max    = all_vels.min(0),    all_vels.max(0)
         self.action_min, self.action_max = all_actions.min(0), all_actions.max(0)
         
@@ -110,10 +120,9 @@ class DiffusionPolicyDataset(Dataset):
         self._action_range = np.where((self.action_max - self.action_min) > 1e-8,
                                       self.action_max - self.action_min, 1.0) 
 
-        goal_feat = self._state_to_features(self.x_goal)      # (NX_FEAT,), computed once
-
         self.samples = []
-        for states, actions in trajs:
+        for states, actions, goal in trajs:
+            goal_feat = self._state_to_features(goal)         # (NX_FEAT,), per-trajectory
             states_f  = self._state_to_features(states)       # (T, NX_FEAT)
             actions_n = self._norm_action(actions)
             T = len(states_f)
