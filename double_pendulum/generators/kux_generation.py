@@ -440,11 +440,17 @@ def save_plots(out_dir, time_span, x_traj, u_traj):
 UPRIGHT = [float(np.pi), 0.0, 0.0, 0.0]
 
 CONFIGS = [
-    dict(Q=[100, 100, 1, 1],   R=[0.01,  0.01]),     # baseline
-    dict(Q=[100, 100, 1, 1],   R=[0.1,   0.1]),      # high control penalty (smoother u)
-    dict(Q=[100, 100, 1, 1],   R=[0.001, 0.001]),    # low control penalty (aggressive u)
-    dict(Q=[500, 500, 1, 1],   R=[0.01,  0.01]),     # tighter position tracking
-    dict(Q=[100, 100, 10, 10], R=[0.01,  0.01]),     # heavier velocity damping
+    dict(Q=[100, 100, 1, 1],   R=[0.01,  0.01]),     # tight angle tracking, near-free control (aggressive u)
+    dict(Q=[10, 10, 10, 10],   R=[10,  10]),     # balanced state/control weighting
+    dict(Q=[10, 10, 10, 10],   R=[200,  200]),     # balanced state, heavy control penalty (very smooth u)
+    dict(Q=[100, 100, 10, 10],   R=[200,  200]),     # angle-priority state, heavy control penalty
+    dict(Q=[100, 100, 1, 1],   R=[200,   200]),      # high control penalty (smoother u)
+    dict(Q=[200, 200, 10, 10], R=[0.1, 0.1]),    # low control penalty (aggressive u)
+
+    # goal = [pi, pi, 0, 0] (both links pointing up in series)
+    dict(Q=[100, 100, 1, 1],   R=[0.01, 0.01], xgoal=[np.pi, np.pi, 0.0, 0.0]),  # tight angle tracking, near-free control
+    dict(Q=[10, 10, 10, 10],   R=[10, 10],     xgoal=[np.pi, np.pi, 0.0, 0.0]),  # balanced state/control weighting
+    dict(Q=[100, 100, 10, 10], R=[200, 200],   xgoal=[np.pi, np.pi, 0.0, 0.0]),  # angle-priority state, heavy control penalty
 ]
 
 SAVE_PLOTS = True

@@ -51,7 +51,7 @@ import matplotlib.pyplot as plt
 from double_pendulum_environment import DoublePendulumEnv
 
 current_dir = Path(__file__).resolve().parent
-results_dir = current_dir / "results"
+results_dir = current_dir.parent / "double_pendulum" / "results"
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

@@ -103,10 +103,12 @@ class DiffusionPolicyDataset(Dataset):
         all_actions = np.concatenate([a for _, a in trajs], axis=0)
         self.vel_min,    self.vel_max    = all_vels.min(0),    all_vels.max(0)
         self.action_min, self.action_max = all_actions.min(0), all_actions.max(0)
+        
+        # to avoid division by zero i precomputed the ranges 
         self._vel_range    = np.where((self.vel_max - self.vel_min) > 1e-8,
                                       self.vel_max - self.vel_min, 1.0)
         self._action_range = np.where((self.action_max - self.action_min) > 1e-8,
-                                      self.action_max - self.action_min, 1.0)
+                                      self.action_max - self.action_min, 1.0) 
 
         goal_feat = self._state_to_features(self.x_goal)      # (NX_FEAT,), computed once
 

@@ -35,9 +35,12 @@ controller -- use a GPU, fewer --n-rollouts, or fewer --conditions for a quick
 look. TVLQR is ~0.1 ms/step and effectively free.
 
 Outputs go to double_pendulum/graphs/evaluation/benchmark/:
-    benchmark_per_rollout.csv   one row per rollout (every raw metric)
-    benchmark_summary.json      per-condition / per-controller aggregates
-    *.png                       success-rate, robustness, smoothness, examples
+    benchmark_summary.json          per-condition / per-controller aggregates
+    *.png                           success-rate, robustness, smoothness, examples
+    csv/benchmark_per_rollout.csv   one row per rollout (every raw metric)
+    csv/benchmark_summary.csv       per-condition aggregates (the printed table)
+
+All CSV logs live together in the dedicated csv/ directory beside the plots.
 """
 
 import os
@@ -84,6 +87,7 @@ from visualizations.visualize_swingup import DiffusionController, TVLQRControlle
 
 results_dir = _HERE / "results"
 OUT_DIR = _HERE / "graphs" / "evaluation" / "benchmark"
+CSV_DIR = OUT_DIR / "csv"          # dedicated home for every logged CSV, beside the plots
 
 GOAL = np.array([np.pi, 0.0, 0.0, 0.0])          # upright
 
@@ -326,6 +330,29 @@ def aggregate(rows):
     tts = [r["time_to_success_s"] for r in rows if r["time_to_success_s"] is not None]
     out["time_to_success_s_mean"] = float(np.mean(tts)) if tts else None
     return out
+
+
+# ── csv logging ───────────────────────────────────────────────────────────────
+def write_csv(path, fieldnames, rows):
+    """Write `rows` (list of dicts) to `path` with a header. None -> empty cell."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as fp:
+        w = csv.DictWriter(fp, fieldnames=fieldnames)
+        w.writeheader()
+        w.writerows(rows)
+
+
+def summary_to_rows(summary, controllers, conditions):
+    """Flatten the per-condition aggregate dict into CSV rows (one per
+    controller x condition), mirroring the table printed to the console."""
+    rows = []
+    for ctrl in controllers:
+        for cond in conditions:
+            agg = summary.get(ctrl, {}).get(cond)
+            if agg is None:
+                continue
+            rows.append({"controller": ctrl, "condition": cond, **agg})
+    return rows
 
 
 # ── plotting ──────────────────────────────────────────────────────────────────
@@ -652,16 +679,23 @@ def main():
     print(f"\nwall time: {time.time() - t_start:.1f}s")
 
     # ── write artifacts ───────────────────────────────────────────────────────
+    # Plots + JSON live in OUT_DIR; every CSV goes in the dedicated CSV_DIR
+    # sitting right beside them.
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    CSV_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUT_DIR / "benchmark_summary.json", "w") as fp:
         json.dump({"args": vars(args), "summary": summary}, fp, indent=2)
     if per_rollout_rows:
-        with open(OUT_DIR / "benchmark_per_rollout.csv", "w", newline="") as fp:
-            w = csv.DictWriter(fp, fieldnames=list(per_rollout_rows[0].keys()))
-            w.writeheader(); w.writerows(per_rollout_rows)
+        write_csv(CSV_DIR / "benchmark_per_rollout.csv",
+                  list(per_rollout_rows[0].keys()), per_rollout_rows)
+    # the per-condition aggregate table printed above, persisted as CSV
+    summary_rows = summary_to_rows(summary, controllers, all_conditions)
+    if summary_rows:
+        write_csv(CSV_DIR / "benchmark_summary.csv",
+                  list(summary_rows[0].keys()), summary_rows)
 
     plot_results(summary, examples, controllers, base_conditions, args.noise_levels)
-    print(f"\n[done] summary + csv + plots in {OUT_DIR}")
+    print(f"\n[done] plots + json in {OUT_DIR}, csv in {CSV_DIR}")
 
 
 if __name__ == "__main__":
