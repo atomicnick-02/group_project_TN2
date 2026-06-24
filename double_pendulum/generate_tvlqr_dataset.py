@@ -104,7 +104,7 @@ def main():
                     help="swing-up-phase state-noise std (DAgger coverage); latches"
                          " off once upright is reached so the hold stays clean")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", default=str(results_dir / "expert_trajectories.h5"))
+    ap.add_argument("--out", default=str(results_dir / "expert_trajectories{}.h5"))
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)

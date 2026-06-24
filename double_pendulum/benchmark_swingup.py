@@ -141,13 +141,18 @@ def make_disturbance(kind, rng, max_steps, push_force, jump_vel):
 
 # ── one headless rollout ──────────────────────────────────────────────────────
 def run_rollout(env, ctrl, ctrl_name, x0, *, max_steps, dt_control, hold_steps,
-                angle_tol, vel_tol, obs_noise_std, disturb, rng, max_tau):
+                angle_tol, vel_tol, obs_noise_std, disturb, rng, max_tau,
+                obs_noise_mask=None):
     """
     Step the MuJoCo plant by hand (no viewer), exactly mirroring the physics loop
     in visualize_swingup.evaluate(), while injecting the requested disturbance.
 
     Success / metrics are evaluated on the CLEAN simulator state; observation
     noise only corrupts the state handed to the controller (robustness test).
+
+    obs_noise_mask: optional length-4 multiplier on the per-dim std, so noise can
+    target angles only ([1,1,0,0]), velocities only ([0,0,1,1]), or be scaled per
+    dim. Default = noise on all four state dims equally.
 
     Returns a dict with the time series and per-step inference timings.
     """
@@ -161,6 +166,11 @@ def run_rollout(env, ctrl, ctrl_name, x0, *, max_steps, dt_control, hold_steps,
     tip_id = env.model.nbody - 1
     dt_sim = env.model.opt.timestep
     n_sub = max(1, int(round(dt_control / dt_sim)))
+
+    # Per-dimension observation-noise std (computed once).
+    mask = np.ones(4) if obs_noise_mask is None else np.asarray(obs_noise_mask, float)
+    noise_std_vec = float(obs_noise_std) * mask
+    apply_noise = bool(np.any(noise_std_vec > 0.0))
 
     ts, xs, us, infer_ms = [], [], [], []
     consecutive_hold = 0
@@ -178,8 +188,8 @@ def run_rollout(env, ctrl, ctrl_name, x0, *, max_steps, dt_control, hold_steps,
 
         # observation handed to the controller (optionally noisy)
         x_obs = x.copy()
-        if obs_noise_std > 0.0:
-            x_obs = x_obs + rng.normal(0.0, obs_noise_std, size=4)
+        if apply_noise:
+            x_obs = x_obs + rng.normal(0.0, noise_std_vec)
 
         t0 = time.perf_counter()
         u = np.asarray(ctrl.action(x_obs), dtype=np.float64).ravel()
@@ -335,15 +345,34 @@ def plot_results(summary, examples, controllers, base_conditions, noise_levels):
     fig.tight_layout(); fig.savefig(OUT_DIR / "success_rate_by_condition.png", dpi=130)
     plt.close(fig)
 
-    # 2. robustness to noise (success rate vs obs-noise std)
+    # 2. robustness to noise. Binary success cliffs hard (the upright hold has a
+    #    narrow noise tolerance), so we ALSO plot GRADED metrics that degrade
+    #    smoothly -- held-fraction and mean angle error -- which is what makes the
+    #    figure informative across the transition instead of a vertical line.
     if noise_levels:
-        fig, ax = plt.subplots(figsize=(8, 5))
+        ns = sorted(noise_levels)
+        fig, (axL, axR) = plt.subplots(1, 2, figsize=(14, 5))
         for ctrl in controllers:
-            rates = [summary[ctrl][f"noise_{s:g}"]["success_rate"] for s in noise_levels]
-            ax.plot(noise_levels, rates, "o-", label=ctrl, color=colors.get(ctrl))
-        ax.set_xlabel("observation noise std"); ax.set_ylabel("success rate")
-        ax.set_ylim(0, 1.05); ax.set_title("Robustness to observation noise")
-        ax.legend(); ax.grid(True)
+            S = [summary[ctrl][f"noise_{s:g}"] for s in ns]
+            succ = [a["success_rate"] for a in S]
+            held = [a["held_fraction_mean"] for a in S]
+            held_sd = [a["held_fraction_std"] for a in S]
+            merr = [a["mean_ang_err_mean"] for a in S]
+            merr_sd = [a["mean_ang_err_std"] for a in S]
+            c = colors.get(ctrl)
+            axL.plot(ns, succ, "o-", color=c, label=f"{ctrl}: success (binary)")
+            axL.plot(ns, held, "s--", color=c, alpha=0.7, label=f"{ctrl}: held-fraction")
+            axL.fill_between(ns, np.array(held) - np.array(held_sd),
+                             np.array(held) + np.array(held_sd), color=c, alpha=0.12)
+            axR.errorbar(ns, merr, yerr=merr_sd, fmt="o-", color=c, capsize=3, label=ctrl)
+        axL.set_xlabel("observation noise std (rad on angles)")
+        axL.set_ylabel("rate"); axL.set_ylim(0, 1.05)
+        axL.set_title("Robustness: success vs graded held-fraction")
+        axL.legend(fontsize=8); axL.grid(True)
+        axR.set_xlabel("observation noise std (rad on angles)")
+        axR.set_ylabel("mean angle error to goal (rad)")
+        axR.set_title("Robustness: control quality degradation")
+        axR.legend(fontsize=8); axR.grid(True)
         fig.tight_layout(); fig.savefig(OUT_DIR / "robustness_noise.png", dpi=130)
         plt.close(fig)
 
@@ -451,6 +480,7 @@ def _run_job(job):
         max_steps=cfg["max_steps"], dt_control=cfg["dt_control"],
         hold_steps=cfg["hold_steps"], angle_tol=cfg["angle_tol"],
         vel_tol=cfg["vel_tol"], obs_noise_std=job["noise_std"],
+        obs_noise_mask=cfg["noise_mask"],
         disturb=disturb, rng=rng, max_tau=max_tau)
     m = compute_metrics(roll)
     row = {"controller": job["controller"], "condition": job["cond_name"],
@@ -487,9 +517,9 @@ def main():
                    default="diffusion")
     p.add_argument("--ckpt", default="diffusion_policy.pt",
                    help="checkpoint filename inside results/ (diffusion)")
-    p.add_argument("--n-rollouts", type=int, default=10,
+    p.add_argument("--n-rollouts", type=int, default=100,
                    help="rollouts (random seeds) per condition")
-    p.add_argument("--max-steps", type=int, default=300)
+    p.add_argument("--max-steps", type=int, default=200)
     p.add_argument("--dt-control", type=float, default=0.05)
     p.add_argument("--hold-steps", type=int, default=40)
     p.add_argument("--angle-tol", type=float, default=0.20)
@@ -502,8 +532,15 @@ def main():
     p.add_argument("--jump-vel", type=float, default=4.0,
                    help="max |velocity| of a random state-jump (rad/s)")
     p.add_argument("--noise-levels", type=float, nargs="*",
-                   default=[0.0, 0.02, 0.05, 0.10, 0.20],
+                   default=[0.0, 0.01, 0.015, 0.02, 0.05],
                    help="obs-noise stds for the robustness sweep")
+    p.add_argument("--noise-dims", choices=["all", "angle", "vel"], default="angle",
+                   help="which observation dims the noise corrupts. 'angle' isolates "
+                        "the sensor the upright hold is most sensitive to (rad); "
+                        "'vel' = velocities only; 'all' = both")
+    p.add_argument("--noise-rollouts", type=int, default=None,
+                   help="rollouts per noise level (default: 2x --n-rollouts, so the "
+                        "binary success fraction is finer / less jumpy)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--conditions", nargs="*",
                    default=["clean", "push", "random_init", "state_jump"],
@@ -531,17 +568,27 @@ def main():
     noise_conditions = {f"noise_{s:g}": ("bottom", None, s) for s in args.noise_levels}
     all_conditions = {**{c: base_specs[c] for c in base_conditions}, **noise_conditions}
 
+    # which state dims observation noise corrupts (angles / velocities / both)
+    noise_mask = {"all": [1, 1, 1, 1], "angle": [1, 1, 0, 0],
+                  "vel": [0, 0, 1, 1]}[args.noise_dims]
+
     # config every worker needs (besides the per-job fields)
     cfg = {"ckpt": args.ckpt, "n_exec": args.n_exec, "max_steps": args.max_steps,
            "dt_control": args.dt_control, "hold_steps": args.hold_steps,
            "angle_tol": args.angle_tol, "vel_tol": args.vel_tol,
-           "push_force": args.push_force, "jump_vel": args.jump_vel}
+           "push_force": args.push_force, "jump_vel": args.jump_vel,
+           "noise_mask": noise_mask}
+
+    # noise levels get more rollouts: success rate is binary, so a coarse count
+    # makes the curve jump in big steps (1/6, 2/6, ...). More seeds -> smoother.
+    noise_rollouts = args.noise_rollouts or (2 * args.n_rollouts)
 
     # flat list of independent rollouts (the unit of parallelism)
     jobs = []
     for ctrl_name in controllers:
         for cond_name, (init_mode, kind, noise_std) in all_conditions.items():
-            for i in range(args.n_rollouts):
+            n_i = noise_rollouts if cond_name.startswith("noise_") else args.n_rollouts
+            for i in range(n_i):
                 jobs.append({
                     "controller": ctrl_name, "cond_name": cond_name,
                     "init_mode": init_mode, "kind": kind, "noise_std": noise_std,
