@@ -1,6 +1,7 @@
 .vscode
 .urdf
 .pdf
+optimal_trajectories/
 gripper/assets/ycb/*
 gripper/assets/autodesk/*
 .claude

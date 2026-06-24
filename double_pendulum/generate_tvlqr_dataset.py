@@ -194,7 +194,7 @@ def main():
                 x0 = -x0                       # mirror the start to match the ref
             # Mix clean and noisy rollouts (~1 in 4 clean), balanced across sides
             # by keying the clean cadence on clean_key, not raw ep.
-            noise = None if clean_key % 4 == 0 else args.noise_std
+            noise = None if clean_key % 3 == 0 else args.noise_std
             s, a, ok = rollout_tvlqr(
                 xr, ur, K, x0, args.episode_steps,
                 dt_control=DT_CTRL, noise_std=noise, rng=rng,

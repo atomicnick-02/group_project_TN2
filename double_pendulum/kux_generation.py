@@ -1,16 +1,43 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import jax
-import cyipopt
-import jax.numpy as jnp
+"""
+Batch generator for optimal swing-up trajectories of the system-identified
+double pendulum.
+
+For each (Q, R, x_goal) configuration in CONFIGS this script:
+  1. solves the direct-collocation trajectory-optimization problem with IPOPT,
+     producing the optimal state trajectory x and control trajectory u, then
+  2. linearizes about that trajectory and runs the TVLQR backward Riccati pass
+     to obtain the time-varying feedback gains K.
+
+The triple (x, u, K) for every configuration is written to its own folder under
+optimal_trajectories/, named by the Q and R diagonals and the x_goal, e.g.
+
+    optimal_trajectories/Q_100_100_1_1__R_0p01_0p01__xgoal_3p142_0_0_0/
+        trajectory.csv   # x : (steps, 4)   header q1,q2,q1_dot,q2_dot
+        inputs.csv       # u : (steps, 2)   header u1,u2
+        K_matrix.npy     # K : (steps-1, 2, 4)
+        config.json      # the Q/R/x_goal/solver metadata for this folder
+
+trajectory.csv / inputs.csv / K_matrix.npy match the format consumed by
+generate_tvlqr_dataset.load_reference(), so any folder is a drop-in reference.
+"""
+
 import os
-from collections import namedtuple
+import json
+from pathlib import Path
+
+import numpy as np
+import jax
+import jax.numpy as jnp
+import cyipopt
+from tqdm import tqdm
 
 jax.config.update("jax_enable_x64", True)
 
 # ─────────────────────────────────────────────
 # Model parameters  (cloudpendulum dp_fwd_inv_dynamics, system-identified)
 # ─────────────────────────────────────────────
+from collections import namedtuple
+
 ModelParams = namedtuple(
     "ModelParams",
     "m1 m2 l1 l2 lc1 lc2 I1 I2 b1 b2 mu1 mu2 g gr1 gr2 Ir torque_limit",
@@ -95,68 +122,61 @@ def rk4_step(x, u, dt):
     return x + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
-def state_dist(x1, x2):
-	"""xi = [q1, q2, q1_dot, q2_dot]
-	Compute the distance between two states,wrapping angles properly 
-	"""
-	diff = x1 - x2
-	diff = diff.at[0].set((diff[0] + jnp.pi) % (2 * jnp.pi) - jnp.pi)
-	diff = diff.at[1].set((diff[1] + jnp.pi) % (2 * jnp.pi) - jnp.pi)
-	return diff
-
-
 # ─────────────────────────────────────────────
-# QP problem Equations
+# Trajectory-optimization cost (parameterized by Q, R, Qfin)
 # ─────────────────────────────────────────────
-def l(xk, uk, x_goal):
+def l(xk, uk, x_goal, Q, R):
     se = xk - x_goal
     return se.T @ Q @ se + uk.T @ R @ uk
 
-def total_objective(z, steps, nx, nu, x_goal, dt=0.05):
+
+def total_objective(z, steps, nx, nu, x_goal, Q, R, Qfin, dt=0.05):
     # z is the flattened decision vector [x0, x1, ..., xN, u0, u1, ..., uN-1]
     X = z[:steps * nx].reshape((steps, nx))
     U = z[steps * nx:].reshape((steps, nu))
-    
-    point_costs = jax.vmap(lambda x, u: l(x, u, x_goal)*0.5)(X, U)
+
+    point_costs = jax.vmap(lambda x, u: l(x, u, x_goal, Q, R) * 0.5)(X, U)
     # 1. Final State Cost
     final_diff = X[-1] - x_goal
     point_costs = point_costs.at[-1].set(final_diff.T @ Qfin @ final_diff)
-    # 2. Apply Weights 
-    cost = jnp.sum(point_costs) 
-    
+    # 2. Sum the (weighted) per-node costs
+    cost = jnp.sum(point_costs)
+
     return cost
 
-def l_deriv(xk, uk, x_goal):
+
+def l_deriv(xk, uk, x_goal, Q, R):
     se = xk - x_goal
     grad_x = 2 * Q @ se
     grad_u = 2 * R @ uk
     return grad_x, grad_u
 
-def total_objective_deriv(z, steps, nx, nu, x_goal, dt=0.05):
+
+def total_objective_deriv(z, steps, nx, nu, x_goal, Q, R, Qfin, dt=0.05):
     # 1. Reshape z back into state and input trajectories
     X = z[:steps * nx].reshape((steps, nx))
-    U = z[steps * nx:].reshape((steps , nu))
-    
+    U = z[steps * nx:].reshape((steps, nu))
+
     # 2. Compute raw gradients at each time step using l_deriv
-    point_grads_X, point_grads_U = jax.vmap(lambda x, u: l_deriv(x, u, x_goal))(X, U)
-    
-    # 3. Apply the weighting 
-    weights = jnp.ones(steps)* 0.5
+    point_grads_X, point_grads_U = jax.vmap(
+        lambda x, u: l_deriv(x, u, x_goal, Q, R))(X, U)
+
+    # 3. Apply the weighting
+    weights = jnp.ones(steps) * 0.5
 
     # Broadcast weights to match the shape of gradients
     grad_X_weighted = point_grads_X * weights[:, None]
     grad_U_weighted = point_grads_U * weights[:, None]
-    
-    # 4. Add Terminal Cost Gradient
-    # The terminal cost is applied only to the last state X[-1]
+
+    # 4. Add Terminal Cost Gradient (applied only to the last state X[-1])
     terminal_grad_X = 2 * Qfin @ (X[-1] - x_goal)
     grad_X_weighted = grad_X_weighted.at[-1].set(terminal_grad_X)
-    
+
     # 5. Flatten and concatenate to form the full gradient vector
-    # Expected size: steps*nx + steps*nu
     grad = jnp.concatenate([grad_X_weighted.flatten(), grad_U_weighted.flatten()])
-    
+
     return grad
+
 
 def trapezoidal_collocation(x_k, x_kp1, u_k, u_kp1, dynamics, dt):
     """
@@ -165,210 +185,332 @@ def trapezoidal_collocation(x_k, x_kp1, u_k, u_kp1, dynamics, dt):
     u_k, u_kp1: controls at node k and k+1
     returns: Scalar constraint value showing the collocation error
     """
-    # 1. Compute dynamics at the nodes
     f_k = dynamics(x_k, u_k)
     f_kp1 = dynamics(x_kp1, u_kp1)
-    
-    # 2. Trapezoidal Rule constraint
     collocation_constraint = x_kp1 - x_k - (dt / 2.0) * (f_k + f_kp1)
-    
     return collocation_constraint.flatten()
+
 
 def constraints(z, steps, nx, nu, x0, x_goal, dt=0.05):
     X = z[:steps * nx].reshape((steps, nx))
-    U = z[steps * nx:].reshape((steps, nu)) 
-    
+    U = z[steps * nx:].reshape((steps, nu))
+
     # Initial state constraint
     c_init = X[0] - x0
     # We have 'steps - 1' intervals to constrain
-    x_curr = X[:-1] # size: steps - 1
-    x_next = X[1:]  # size: steps - 1
-    
-    u_curr = U[:-1] # size: steps - 1 
-    u_next = U[1:]  # size: steps - 1 
-    
-    hs_vmap = jax.vmap(lambda xk, xkp1, uk, ukp1: 
+    x_curr = X[:-1]
+    x_next = X[1:]
+    u_curr = U[:-1]
+    u_next = U[1:]
+
+    hs_vmap = jax.vmap(lambda xk, xkp1, uk, ukp1:
                        trapezoidal_collocation(xk, xkp1, uk, ukp1, dynamics, dt))
-    
+
     c_dyn = hs_vmap(x_curr, x_next, u_curr, u_next).flatten()
-    
+
     # Final state constraint
     c_final = X[-1] - x_goal
     return jnp.concatenate([c_init, c_dyn, c_final])
 
 
-
 class Problem:
-	"""
- 	Defines a minimization problem with the following form:
-		min f(z) (z = [x0, x1, ..., xN, u0, u1, ..., uN-1])
-	s.t. h(z) = 0
-		lb <= z <= ub
-	f(z) = objective function
-	"""
-	def __init__(self, steps, nx, nu, x0, xgoal, dt):
-		self.steps = steps
-		self.nx = nx # Number of states
-		self.nu = nu # Number of inputs
-		print(f"Problem initialized with {steps} steps, {nx} states, {nu} inputs.")
-		# JIT-compiled functions with fixed problem dimensions and xgoal/x0
-		self._obj_jit = jax.jit(lambda z: total_objective(z, self.steps, self.nx, self.nu, xgoal)) # f(z)
-		# self._grad_jit = jax.jit(jax.grad(lambda z: total_objective(z, self.steps, self.nx, self.nu, xgoal))) #	nablaf(z)
-		self._grad_jit = lambda z: total_objective_deriv(z, self.steps, self.nx, self.nu, xgoal)
-		
-  		# pass x0 and xgoal into constraints/jacobian to match signature
-		self._cons_jit = jax.jit(lambda z: constraints(z, self.steps, self.nx, self.nu, x0, xgoal, dt)) # h(z)
-		self._jac_jit = jax.jit(jax.jacobian(lambda z: constraints(z, self.steps, self.nx, self.nu, x0, xgoal, dt))) # nablag(z)
+    """
+    Defines a minimization problem with the following form:
+        min f(z)   (z = [x0, x1, ..., xN, u0, u1, ..., uN-1])
+        s.t. h(z) = 0
+             lb <= z <= ub
+    The cost weights (Q, R, Qfin), the start x0 and the goal xgoal are baked into
+    the JIT-compiled callbacks so a fresh Problem is built per configuration.
+    """
 
-	def objective(self, z):
-		return float(self._obj_jit(z))
+    def __init__(self, steps, nx, nu, x0, xgoal, dt, Q, R, Qfin):
+        self.steps = steps
+        self.nx = nx  # Number of states
+        self.nu = nu  # Number of inputs
+        # f(z) and its gradient (analytic), with the cost weights baked in.
+        self._obj_jit = jax.jit(
+            lambda z: total_objective(z, steps, nx, nu, xgoal, Q, R, Qfin, dt))
+        self._grad_jit = jax.jit(
+            lambda z: total_objective_deriv(z, steps, nx, nu, xgoal, Q, R, Qfin, dt))
+        # h(z) and its Jacobian, with x0/xgoal baked in.
+        self._cons_jit = jax.jit(
+            lambda z: constraints(z, steps, nx, nu, x0, xgoal, dt))
+        self._jac_jit = jax.jit(jax.jacobian(
+            lambda z: constraints(z, steps, nx, nu, x0, xgoal, dt)))
 
-	def gradient(self, z):
-		return np.array(self._grad_jit(z)).ravel().astype(np.float64)
+    def objective(self, z):
+        return float(self._obj_jit(z))
 
-	def constraints(self, z):
-		return np.array(self._cons_jit(z))
+    def gradient(self, z):
+        return np.array(self._grad_jit(z)).ravel().astype(np.float64)
 
-	def jacobian(self, z):
-		jac = self._jac_jit(z)
-		# return flattened Jacobian (rows*cols) - matches earlier usage
-		return jac.ravel()
+    def constraints(self, z):
+        return np.array(self._cons_jit(z))
 
-Q = jnp.diag(jnp.array([100.0, 100.0, 1.0, 1.0]))
-Qfin =  Q
-R = jnp.diag(jnp.array([1, 1])) * 0.01
-
-
-# Simulation parameters
-T = 2 # Total simulation time in seconds
-dt = 0.05
-steps = int(T / dt) + 1
-time_span = jnp.linspace(0, T, steps)
-
-# Initial state
-x0 = jnp.array([0.0, 0.0, 0.0, 0.0])
-xgoal = jnp.array([jnp.pi, 0.0, 0.0, 0.0])
-# Storage for history
-x_history = [x0]
-u_history = []
-force_history = []
-
-# Initialize x_traj with random positions, but keep start and end fixed
-key = jax.random.PRNGKey(0)
-x_traj = jax.random.uniform(key, shape=(steps, 4), minval=-jnp.pi, maxval=jnp.pi)
-u_traj = jax.random.uniform(key, shape=(steps, 2), minval=P.torque_limit, maxval=-P.torque_limit)
-
-x_traj = x_traj.at[0].set(x0)
-x_traj = x_traj.at[-1].set(xgoal)
-
-grad_func = jax.jit(jax.grad(total_objective), static_argnums=(1, 2, 3))
+    def jacobian(self, z):
+        jac = self._jac_jit(z)
+        # return flattened Jacobian (rows*cols) - matches earlier usage
+        return jac.ravel()
 
 
-nx = 4
-nu = 2
-num_vars = steps * nx + steps * nu
-num_constraints = (steps - 1) * nx + nx + nx 
- 
-
-x_init_guess = jnp.zeros((steps, 4))
-x_init_guess = x_init_guess.at[:, 0].set(jnp.linspace(0, jnp.pi, steps))
-z0 = jnp.concatenate([x_init_guess.flatten(), u_traj.flatten()])
-
-# Initial guess
-z0 = jnp.concatenate([x_traj.flatten(), u_traj.flatten()])
-
-# Bounds for variables
-# State bounds unbounded
-x_lb = jnp.full((steps, nx), -jnp.inf)
-x_ub = jnp.full((steps, nx), jnp.inf)
-# Input bounds
-u_lb = jnp.full((steps, nu), -P.torque_limit)
-u_ub = jnp.full((steps, nu), P.torque_limit)
-
-lb = jnp.concatenate([x_lb.flatten(), u_lb.flatten()])
-ub = jnp.concatenate([x_ub.flatten(), u_ub.flatten()])
-# set the second motor torque limits tighter
-
-# Constraint bounds: equality constraints (dynamics + initial state) => zeros
-cl = jnp.zeros(num_constraints)
-cu = jnp.zeros(num_constraints)
+# ─────────────────────────────────────────────
+# TVLQR gains: linearize the RK4 step, then backward Riccati pass
+# (faithful to old_pendulum/simul.ipynb)
+# ─────────────────────────────────────────────
+def get_continuous_jacobians(x, u):
+    f = lambda x, u: dynamics(x, u)
+    A = jax.jacfwd(f, argnums=0)(x, u)
+    B = jax.jacfwd(f, argnums=1)(x, u)
+    return A, B
 
 
-problem = cyipopt.Problem(
-	n=num_vars,
-	m=num_constraints,
-	problem_obj=Problem(steps, nx, nu, x0, xgoal, dt),
-	lb=lb,
-	ub=ub,
-	cl=cl,
-	cu=cu
-)
+def get_discrete_matrices(x_k, u_k, dt=0.05):
+    """Discrete-time A_d, B_d via the chain rule through the RK4 step."""
+    nx = x_k.shape[0]
+    I = jnp.eye(nx)
+
+    # Stage 1: k1 = f(x, u)
+    A1, B1 = get_continuous_jacobians(x_k, u_k)
+    dk1_dx = A1
+    dk1_du = B1
+
+    # Stage 2: k2 = f(x + 0.5*dt*k1, u)
+    x2 = x_k + 0.5 * dt * dynamics(x_k, u_k)
+    A2, B2 = get_continuous_jacobians(x2, u_k)
+    dk2_dx = A2 @ (I + 0.5 * dt * dk1_dx)
+    dk2_du = A2 @ (0.5 * dt * dk1_du) + B2
+
+    # Stage 3: k3 = f(x + 0.5*dt*k2, u)
+    x3 = x_k + 0.5 * dt * dynamics(x_k + 0.5 * dt * dynamics(x_k, u_k), u_k)
+    A3, B3 = get_continuous_jacobians(x3, u_k)
+    dk3_dx = A3 @ (I + 0.5 * dt * dk2_dx)
+    dk3_du = A3 @ (0.5 * dt * dk2_du) + B3
+
+    # Stage 4: k4 = f(x + dt*k3, u)
+    k1_val = dynamics(x_k, u_k)
+    k2_val = dynamics(x_k + 0.5 * dt * k1_val, u_k)
+    k3_val = dynamics(x_k + 0.5 * dt * k2_val, u_k)
+    x4 = x_k + dt * k3_val
+    A4, B4 = get_continuous_jacobians(x4, u_k)
+    dk4_dx = A4 @ (I + dt * dk3_dx)
+    dk4_du = A4 @ (dt * dk3_du) + B4
+
+    # A_d = I + dt/6 (dk1_dx + 2 dk2_dx + 2 dk3_dx + dk4_dx)
+    A_d = I + (dt / 6.0) * (dk1_dx + 2 * dk2_dx + 2 * dk3_dx + dk4_dx)
+    # B_d = dt/6 (dk1_du + 2 dk2_du + 2 dk3_du + dk4_du)
+    B_d = (dt / 6.0) * (dk1_du + 2 * dk2_du + 2 * dk3_du + dk4_du)
+    return A_d, B_d
 
 
-# Set options
-problem.add_option('max_iter', 100)
-problem.add_option('tol', 1e-3)
-problem.add_option('print_level', 0) # 5 is default, 0 is silent
+def tvlqr_backward_pass(P_next, inputs, Q_d, R_d, dt=0.05):
+    x_k, u_k = inputs
+    A_d, B_d = get_discrete_matrices(x_k, u_k, dt)
+    S = R_d + B_d.T @ P_next @ B_d
+    K_k = jnp.linalg.solve(S, B_d.T @ P_next @ A_d)
+    P_k = Q_d + A_d.T @ P_next @ (A_d - B_d @ K_k)
+    return P_k, K_k
 
-# Solve
-z_opt, info = problem.solve(z0)
 
-# Unpack results
-x_traj = z_opt[:steps * nx].reshape((steps, nx))
-u_traj = z_opt[steps * nx:].reshape((steps, nu))
-force_history = u_traj
+def compute_tvlqr_gains(x_traj, u_traj, Q, R, Qfin, dt):
+    """Backward Riccati sweep about (x_traj, u_traj). Returns K (steps-1, nu, nx)."""
+    x_traj = jnp.asarray(x_traj)
+    u_traj = jnp.asarray(u_traj)
+    # Sweep backward over the steps-1 intervals (reverse time order).
+    xs_scan = x_traj[:-1][::-1]
+    us_scan = u_traj[:-1][::-1]
+    scan_fn = lambda p, inp: tvlqr_backward_pass(p, inp, Q, R, dt)
+    _, K_rev = jax.lax.scan(scan_fn, Qfin, (xs_scan, us_scan))
+    K = K_rev[::-1]                       # back to forward time order
+    return np.asarray(K)
 
-import matplotlib.pyplot as plt
 
-# Plots
-x_history = jnp.array(x_history)
-ref = jnp.ones(steps) * jnp.pi
-font = 14
-# Plotting
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4))
-print("last second", time_span[-1], x_traj[-1])
+# ─────────────────────────────────────────────
+# Solve one trajectory-optimization problem
+# ─────────────────────────────────────────────
+def solve_trajectory(x0, xgoal, Q, R, Qfin, steps, nx, nu, dt,
+                     max_iter=100, tol=1e-3, print_level=0):
+    num_vars = steps * nx + steps * nu
+    num_constraints = (steps - 1) * nx + nx + nx
 
-# Plot Joint Angles
-ax1.plot(time_span, x_traj[:, 0], label=r'$q_1$ (rad)')
-ax1.plot(time_span, x_traj[:, 1], label=r'$q_2$ (rad)')
-ax1.set_title('Joint States over Time')
-ax1.set_ylabel('Angle (rad)', fontsize=font)
-ax1.set_xlabel('Time (s)', fontsize=font)
-ax1.legend()
-ax1.grid(True)
+    # Warm start: linear interpolation x0 -> xgoal per state dim, zero controls.
+    x_init = jnp.zeros((steps, nx))
+    for i in range(nx):
+        x_init = x_init.at[:, i].set(jnp.linspace(x0[i], xgoal[i], steps))
+    u_init = jnp.zeros((steps, nu))
+    z0 = jnp.concatenate([x_init.flatten(), u_init.flatten()])
 
-# Plot Joint Velocities
-ax2.plot(time_span, x_traj[:, 2], label=r'$\dot{q}_1$ (rad/s)', linestyle='--')
-ax2.plot(time_span, x_traj[:, 3], label=r'$\dot{q}_2$ (rad/s)', linestyle='--')
-ax2.plot(time_span, ref, 'k:')
-ax2.set_title('Joint Vel over Time')
-ax2.set_ylabel('Value (rad/s)', fontsize=font)
-ax2.set_xlabel('Time (s)', fontsize=font)
-ax2.legend()
-ax2.grid(True)
+    # Bounds: states unbounded, controls within the actuator torque limit.
+    x_lb = jnp.full((steps, nx), -jnp.inf)
+    x_ub = jnp.full((steps, nx), jnp.inf)
+    u_lb = jnp.full((steps, nu), -P.torque_limit)
+    u_ub = jnp.full((steps, nu), P.torque_limit)
+    lb = jnp.concatenate([x_lb.flatten(), u_lb.flatten()])
+    ub = jnp.concatenate([x_ub.flatten(), u_ub.flatten()])
 
-plt.tight_layout()
+    # Equality constraints (initial + dynamics + final) => zeros.
+    cl = jnp.zeros(num_constraints)
+    cu = jnp.zeros(num_constraints)
 
-# plot Forces
-plt.figure(figsize=(7, 4))
-plt.plot(time_span[:], force_history[:, 0], label=r'$u_1$ (Nm)')
-plt.plot(time_span[:], force_history[:, 1], label=r'$u_2$ (Nm)')
-plt.title('Control Inputs (Torques) over Time')
-plt.xlabel('Time (s)',fontsize=font)
-plt.ylabel('Torque (Nm)',fontsize=font)
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
-# Construct filename suffix from Q and R matrices
-q_diag = jnp.diag(Q)
-r_diag = jnp.diag(R)
-# filename_suffix = f"R_{int(r_diag[0])}_{int(r_diag[1])}_Q_{int(q_diag[0])}_{int(q_diag[1])}_{int(q_diag[2])}_{int(q_diag[3])}"
+    problem = cyipopt.Problem(
+        n=num_vars,
+        m=num_constraints,
+        problem_obj=Problem(steps, nx, nu, x0, xgoal, dt, Q, R, Qfin),
+        lb=lb,
+        ub=ub,
+        cl=cl,
+        cu=cu,
+    )
+    problem.add_option('max_iter', max_iter)
+    problem.add_option('tol', tol)
+    problem.add_option('print_level', print_level)
 
-# # Save figures
-# fig_joint_states = plt.figure(1)
-# fig_torques = plt.figure(2)
+    z_opt, info = problem.solve(z0)
 
-# fig_joint_states.savefig(f"Joint_states_{filename_suffix}.png")
-# fig_torques.savefig(f"Torques_{filename_suffix}.png")
+    x_traj = np.asarray(z_opt[:steps * nx]).reshape((steps, nx))
+    u_traj = np.asarray(z_opt[steps * nx:]).reshape((steps, nu))
+    return x_traj, u_traj, info
 
-plt.show()
+
+# ─────────────────────────────────────────────
+# Naming + saving
+# ─────────────────────────────────────────────
+def _fmt(v):
+    """Compact, filesystem-safe token for a scalar: '.'->'p', '-'->'m'."""
+    v = float(v)
+    s = str(int(v)) if v == int(v) else f"{v:.4g}"
+    return s.replace("-", "m").replace(".", "p")
+
+
+def config_dirname(Q, R, xgoal):
+    """Folder name encoding the Q and R diagonals and the goal state."""
+    q = "_".join(_fmt(v) for v in np.diag(np.asarray(Q)))
+    r = "_".join(_fmt(v) for v in np.diag(np.asarray(R)))
+    g = "_".join(_fmt(v) for v in np.asarray(xgoal))
+    return f"Q_{q}__R_{r}__xgoal_{g}"
+
+
+def save_trajectory(out_dir, x_traj, u_traj, K, meta):
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    np.savetxt(out_dir / "trajectory.csv", x_traj, delimiter=",",
+               header="q1,q2,q1_dot,q2_dot", comments="")
+    np.savetxt(out_dir / "inputs.csv", u_traj, delimiter=",",
+               header="u1,u2", comments="")
+    np.save(out_dir / "K_matrix.npy", np.asarray(K))
+    with open(out_dir / "config.json", "w") as f:
+        json.dump(meta, f, indent=2)
+
+
+def save_plots(out_dir, time_span, x_traj, u_traj):
+    import matplotlib
+    matplotlib.use("Agg")              # headless: write PNGs, never block on a window
+    import matplotlib.pyplot as plt
+
+    out_dir = Path(out_dir)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 4))
+    ax1.plot(time_span, x_traj[:, 0], label=r'$q_1$ (rad)')
+    ax1.plot(time_span, x_traj[:, 1], label=r'$q_2$ (rad)')
+    ax1.set_title('Joint States over Time')
+    ax1.set_ylabel('Angle (rad)'); ax1.set_xlabel('Time (s)')
+    ax1.legend(); ax1.grid(True)
+    ax2.plot(time_span, x_traj[:, 2], label=r'$\dot{q}_1$ (rad/s)', linestyle='--')
+    ax2.plot(time_span, x_traj[:, 3], label=r'$\dot{q}_2$ (rad/s)', linestyle='--')
+    ax2.set_title('Joint Velocities over Time')
+    ax2.set_ylabel('Value (rad/s)'); ax2.set_xlabel('Time (s)')
+    ax2.legend(); ax2.grid(True)
+    fig.tight_layout()
+    fig.savefig(out_dir / "states.png", dpi=120)
+    plt.close(fig)
+
+    fig2 = plt.figure(figsize=(7, 4))
+    plt.plot(time_span, u_traj[:, 0], label=r'$u_1$ (Nm)')
+    plt.plot(time_span, u_traj[:, 1], label=r'$u_2$ (Nm)')
+    plt.title('Control Inputs (Torques) over Time')
+    plt.xlabel('Time (s)'); plt.ylabel('Torque (Nm)')
+    plt.legend(); plt.grid(True); plt.tight_layout()
+    fig2.savefig(out_dir / "torques.png", dpi=120)
+    plt.close(fig2)
+
+
+# ─────────────────────────────────────────────
+# Configurations to generate
+#   Each entry: Q (4 state weights), R (2 control weights), and optionally
+#   Qfin (terminal state weights, default = Q) and xgoal (default upright).
+# ─────────────────────────────────────────────
+UPRIGHT = [float(np.pi), 0.0, 0.0, 0.0]
+
+CONFIGS = [
+    dict(Q=[100, 100, 1, 1],   R=[0.01,  0.01]),     # baseline
+    dict(Q=[100, 100, 1, 1],   R=[0.1,   0.1]),      # high control penalty (smoother u)
+    dict(Q=[100, 100, 1, 1],   R=[0.001, 0.001]),    # low control penalty (aggressive u)
+    dict(Q=[500, 500, 1, 1],   R=[0.01,  0.01]),     # tighter position tracking
+    dict(Q=[100, 100, 10, 10], R=[0.01,  0.01]),     # heavier velocity damping
+]
+
+SAVE_PLOTS = True
+
+
+def main():
+    nx, nu = 4, 2
+    T, dt = 2.0, 0.05
+    steps = int(T / dt) + 1
+    time_span = np.linspace(0, T, steps)
+    x0 = jnp.array([0.0, 0.0, 0.0, 0.0])
+
+    out_root = Path(__file__).resolve().parent / "optimal_trajectories"
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    pbar = tqdm(CONFIGS, desc="optimal trajectories", unit="traj")
+    for i, cfg in enumerate(pbar):
+        Q = jnp.diag(jnp.array(cfg["Q"], dtype=float))
+        R = jnp.diag(jnp.array(cfg["R"], dtype=float))
+        Qfin = jnp.diag(jnp.array(cfg.get("Qfin", cfg["Q"]), dtype=float))
+        xgoal = jnp.array(cfg.get("xgoal", UPRIGHT), dtype=float)
+
+        name = config_dirname(Q, R, xgoal)
+        out_dir = out_root / name
+        pbar.set_postfix_str(name)
+        tqdm.write(f"[{i + 1}/{len(CONFIGS)}] {name}")
+
+        # 1. Optimal (x, u) via direct collocation.
+        x_traj, u_traj, info = solve_trajectory(
+            x0, xgoal, Q, R, Qfin, steps, nx, nu, dt)
+        status = int(info["status"])
+        msg = info.get("status_msg", b"")
+        msg = msg.decode() if isinstance(msg, (bytes, bytearray)) else str(msg)
+        tqdm.write(f"    IPOPT status {status}: {msg}")
+        tqdm.write(f"    final state {np.round(x_traj[-1], 4)} (goal "
+                   f"{np.round(np.asarray(xgoal), 4)})")
+
+        # 2. Time-varying LQR gains about that trajectory.
+        K = compute_tvlqr_gains(x_traj, u_traj, Q, R, Qfin, dt)
+
+        # 3. Save x, u, K (+ metadata, + optional plots).
+        meta = {
+            "Q_diag": [float(v) for v in np.diag(np.asarray(Q))],
+            "R_diag": [float(v) for v in np.diag(np.asarray(R))],
+            "Qfin_diag": [float(v) for v in np.diag(np.asarray(Qfin))],
+            "x0": [float(v) for v in np.asarray(x0)],
+            "x_goal": [float(v) for v in np.asarray(xgoal)],
+            "T": float(T), "dt": float(dt), "steps": int(steps),
+            "nx": nx, "nu": nu,
+            "torque_limit": float(P.torque_limit),
+            "ipopt_status": status,
+            "ipopt_status_msg": msg,
+            "ipopt_obj_val": float(info.get("obj_val", np.nan)),
+            "final_state": [float(v) for v in np.asarray(x_traj[-1])],
+            "x_shape": list(np.asarray(x_traj).shape),
+            "u_shape": list(np.asarray(u_traj).shape),
+            "K_shape": list(np.asarray(K).shape),
+        }
+        save_trajectory(out_dir, x_traj, u_traj, K, meta)
+        if SAVE_PLOTS:
+            save_plots(out_dir, time_span, x_traj, u_traj)
+        tqdm.write(f"    saved x{meta['x_shape']}, u{meta['u_shape']}, "
+                   f"K{meta['K_shape']} -> {out_dir}")
+
+    print(f"\nDone. {len(CONFIGS)} trajectories written under {out_root}")
+
+
+if __name__ == "__main__":
+    main()
