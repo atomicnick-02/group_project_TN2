@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -5,6 +7,9 @@ import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
+
+# Anchor output images next to this script so it works from any cwd.
+_HERE = Path(__file__).resolve().parent
 
 # ── Hyperparameters ────────────────────────────────────────────────────────────
 TIMESTEPS  = 100
@@ -170,7 +175,7 @@ def visualize_schedules(scheduler: Scheduler):
     ax2.grid(); ax2.legend()
 
     plt.tight_layout()
-    plt.savefig('alpha_beta_schedules.png')
+    plt.savefig(_HERE / 'alpha_beta_schedules.png')
 
 
 def visualize_forward_diffusion(dataset: ToyDataset, scheduler: Scheduler, n_plots: int = 10):
@@ -192,7 +197,7 @@ def visualize_forward_diffusion(dataset: ToyDataset, scheduler: Scheduler, n_plo
         ax.set_aspect('equal'); ax.grid()
 
     plt.tight_layout()
-    plt.savefig('forward_diffusion_visualization.png')
+    plt.savefig(_HERE / 'forward_diffusion_visualization.png')
 
 
 # ── Run sampling and plot results ──────────────────────────────────────────────

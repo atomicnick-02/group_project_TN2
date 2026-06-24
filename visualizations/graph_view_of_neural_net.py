@@ -3,12 +3,17 @@ Architecture diagrams for the MLP and TrajectoryTransformer noise-prediction
 networks used in the diffusion policy.
 """
 
+from pathlib import Path
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import FancyArrowPatch
 import numpy as np
+
+# Output dir is anchored to this script's location so it works from any cwd.
+IMAGES_DIR = Path(__file__).resolve().parent / "images"
 
 
 # ── colour palette ────────────────────────────────────────────────────────────
@@ -237,7 +242,7 @@ def main():
     add_legend(fig_mlp)
     plt.figure(fig_mlp.number)
     plt.tight_layout(rect=[0, 0.05, 1, 0.97])
-    out_mlp = "visualizations/images/architecture_mlp.png"
+    out_mlp = IMAGES_DIR / "architecture_mlp.png"
     fig_mlp.savefig(out_mlp, dpi=150, bbox_inches="tight")
     print(f"Saved → {out_mlp}")
 
@@ -249,7 +254,7 @@ def main():
     add_legend(fig_tr)
     plt.figure(fig_tr.number)
     plt.tight_layout(rect=[0, 0.05, 1, 0.97])
-    out_tr = "visualizations/images/architecture_transformer.png"
+    out_tr = IMAGES_DIR / "architecture_transformer.png"
     fig_tr.savefig(out_tr, dpi=150, bbox_inches="tight")
     print(f"Saved → {out_tr}")
 

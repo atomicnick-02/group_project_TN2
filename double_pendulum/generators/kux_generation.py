@@ -457,7 +457,8 @@ def main():
     time_span = np.linspace(0, T, steps)
     x0 = jnp.array([0.0, 0.0, 0.0, 0.0])
 
-    out_root = Path(__file__).resolve().parent / "optimal_trajectories"
+    # optimal_trajectories/ lives in double_pendulum/ (one level up from this generators/ dir).
+    out_root = Path(__file__).resolve().parent.parent / "optimal_trajectories"
     out_root.mkdir(parents=True, exist_ok=True)
 
     pbar = tqdm(CONFIGS, desc="optimal trajectories", unit="traj")

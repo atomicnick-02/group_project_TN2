@@ -50,6 +50,9 @@ import argparse
 import warnings
 import multiprocessing as mp
 from pathlib import Path
+import sys 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
@@ -77,7 +80,7 @@ from tqdm import tqdm
 from double_pendulum_environment import DoublePendulumEnv
 # Reuse the EXACT controllers used by the interactive viewer so the headless
 # numbers correspond to what you watch on screen.
-from visualize_swingup import DiffusionController, TVLQRController, wrap_to_pi
+from visualizations.visualize_swingup import DiffusionController, TVLQRController, wrap_to_pi
 
 results_dir = _HERE / "results"
 OUT_DIR = _HERE / "graphs" / "evaluation" / "benchmark"

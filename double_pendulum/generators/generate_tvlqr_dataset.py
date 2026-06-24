@@ -42,18 +42,21 @@ K_matrix.npy) produced by generate_k.py. A self-check aborts if that reference o
 disk no longer swings up and holds in the notebook model.
 """
 
+import sys
 import argparse
 from pathlib import Path
 
 import numpy as np
 import h5py
 
+# `rollout_tvlqr` lives in double_pendulum/ (one level up from this generators/ dir).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rollout_tvlqr import P, rollout_tvlqr, wrap_to_pi
 
 current_dir = Path(__file__).resolve().parent
-results_dir = current_dir / "results"
+results_dir = current_dir.parent / "optimal_trajectories" / "working_optimal_trajectory"
 
-X_GOAL = np.array([0.0, 0.0, 0.0, 0.0])
+X_GOAL = np.array([np.pi, 0.0, 0.0, 0.0])
 DT_CTRL = 0.05
 
 

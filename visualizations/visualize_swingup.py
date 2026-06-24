@@ -28,7 +28,9 @@ Run from the repo root (so diffusion_models is importable):
 
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _REPO_ROOT)                                   # for `diffusion_models`
+sys.path.insert(0, os.path.join(_REPO_ROOT, "double_pendulum"))  # for `double_pendulum_environment`
 import time
 import json
 import select

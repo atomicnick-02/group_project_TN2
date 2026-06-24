@@ -28,6 +28,8 @@ import numpy as np
 import torch
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from diffusion_models.diffusion_policy import (
     Scheduler, MLP, TrajectoryTransformer, DiffusionPolicy,
