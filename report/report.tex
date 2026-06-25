@@ -1,0 +1,729 @@
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+
+% ── Code listing style ────────────────────────────────────────────────────────
+\definecolor{codebg}{rgb}{0.97,0.97,0.97}
+\definecolor{codekw}{rgb}{0.10,0.10,0.55}
+\definecolor{codecom}{rgb}{0.30,0.50,0.30}
+\definecolor{codestr}{rgb}{0.60,0.20,0.10}
+\lstdefinestyle{py}{
+  language=Python,
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecom}\itshape,
+  stringstyle=\color{codestr},
+  numbers=left, numberstyle=\tiny\color{gray}, numbersep=6pt,
+  frame=single, rulecolor=\color{gray!40},
+  breaklines=true, showstringspaces=false,
+  tabsize=2, columns=fullflexible, keepspaces=true,
+}
+\lstset{style=py}
+
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\code}[1]{\texttt{#1}}
+% Wrapping filename for narrow table cells (footnotesize typewriter).
+\newcommand{\fn}[1]{{\footnotesize\ttfamily #1}}
+% Ragged-right paragraph column.
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{\textbf{From Optimal Control to Diffusion Policy}\\[2pt]
+\large A Trajectory-Optimization $\rightarrow$ TVLQR $\rightarrow$
+Behavioural-Cloning Pipeline for Double-Pendulum Swing-Up}
+\author{Group Project TN2 --- Technical Documentation}
+\date{\today}
+
+\begin{document}
+\maketitle
+\clearpage
+
+\tableofcontents
+\bigskip
+\hrule
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+\label{sec:intro}
+
+Swinging an underactuated double pendulum from its stable hanging configuration up
+to an unstable equilibrium --- and then \emph{holding} it there --- is a classic
+benchmark in nonlinear control. The task is hard for two reasons: the plant is
+strongly nonlinear and torque-limited, so the swing-up must pump energy through a
+carefully timed sequence of motions; and the upright goal is an unstable
+equilibrium, so balancing demands fast, accurate feedback. Reinforcement learning
+can solve such tasks but is sample-hungry and delicate to tune. This project takes
+a different route: \emph{imitation learning}, in which a classical optimal-control
+expert is constructed first, demonstrations are harvested from it, and a generative
+neural policy is fit to those demonstrations.
+
+This report documents four Python modules that together implement that pipeline
+end to end for a system-identified double pendulum. The pipeline proceeds in four
+stages: (i) \file{kux\_generation.py} solves a family of direct-collocation
+trajectory-optimization problems and computes time-varying LQR (TVLQR) feedback
+gains about each optimal trajectory; (ii) \file{generate\_tvlqr\_dataset\_kux.py}
+rolls those TVLQR controllers out in closed loop through the identified plant to
+synthesise an expert demonstration dataset; (iii) \file{diffusion\_policy.py}
+defines a conditional Denoising Diffusion Probabilistic Model (DDPM) over action
+sequences with both MLP and Transformer backbones; and (iv)
+\file{train\_diffusion\_policy.py} trains that diffusion policy by behavioural
+cloning on the expert dataset.
+
+The remainder of the report is organised as follows.
+Section~\ref{sec:overview} gives a high-level overview of the pipeline and the
+file-on-disk interfaces that decouple its stages, and Section~\ref{sec:plant}
+specifies the shared plant model. Sections~\ref{sec:kux}--\ref{sec:train} then
+describe the four stages in turn: the optimal-control expert and its TVLQR
+stabilisation, the closed-loop dataset generation, the diffusion-policy model, and
+its training by behavioural cloning. Section~\ref{sec:tricks} isolates the
+modifications that adapt a textbook DDPM into a closed-loop controller for an
+unstable, torque-limited plant. Finally, Section~\ref{sec:interfaces} collects the
+data contracts between stages, Section~\ref{sec:limits} records the known
+limitations of the resulting controller, and Section~\ref{sec:conclusion}
+concludes.
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Overview of the Pipeline}
+\label{sec:overview}
+
+The goal is to learn a neural feedback policy that swings a double pendulum from
+the hanging-down configuration up to an unstable equilibrium (upright, or the
+folded $[\pi,\pi]$ pose) and holds it there. Rather than learning from scratch
+with reinforcement learning, the project uses \emph{imitation learning}: a
+classical optimal-control expert is constructed, demonstrations are harvested
+from it, and a generative policy is fit to those demonstrations.
+
+\begin{table}[h]
+\centering
+\caption{The four modules and their roles in the pipeline. Paths are relative to
+the project root; the first two modules live in \file{double\_pendulum/}.}
+\label{tab:modules}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}L{3.6cm} L{1.9cm} L{8.7cm}@{}}
+\toprule
+\textbf{Module} & \textbf{Stage} & \textbf{Responsibility} \\
+\midrule
+\fn{generators/}\newline\fn{kux\_generation.py} & Expert design &
+Solves the direct-collocation trajectory-optimization problem (IPOPT) and the
+TVLQR backward pass. Writes one folder of $(x,u,K)$ per
+$(Q,R,x_{\text{goal}})$ configuration. \\
+\fn{generators/}\newline\fn{generate\_tvlqr\_}\newline\fn{dataset\_kux.py} &
+Data harvesting &
+Rolls every TVLQR reference (and its mirror) out in closed loop through the
+plant, logging (state,\,action) pairs to an HDF5 dataset. \\
+\fn{diffusion\_models/}\newline\fn{diffusion\_policy.py} & Model &
+Defines the DDPM scheduler, the MLP and Transformer noise-prediction networks,
+and the \code{DiffusionPolicy} train/sample/act class. \\
+\fn{train\_diffusion\_}\newline\fn{policy.py} & Learning &
+Slices trajectories into conditioning/action windows, normalizes them, and
+trains the diffusion policy; writes a self-describing checkpoint. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\newcommand{\flowbox}[2]{%
+  \fbox{\begin{minipage}{0.82\textwidth}\centering
+  \textbf{#1}\\[2pt]\footnotesize #2
+  \end{minipage}}}
+
+\begin{figure}[h]
+\centering
+\small
+\begin{tabular}{@{}c@{}}
+\flowbox{Stage 1 \;:\; \texttt{kux\_generation.py}}
+        {trajectory optimization + TVLQR \quad$\longrightarrow$\quad writes
+         \texttt{optimal\_trajectories/<cfg>/}\\
+         \texttt{trajectory.csv}, \texttt{inputs.csv},
+         \texttt{K\_matrix.npy}, \texttt{config.json}} \\[3pt]
+$\big\downarrow$ \\[3pt]
+\flowbox{Stage 2 \;:\; \texttt{generate\_tvlqr\_dataset\_kux.py}}
+        {closed-loop rollout of every reference \quad$\longrightarrow$\quad writes
+         \texttt{expert\_trajectories\_kux\_*.h5}\\
+         groups \texttt{traj\_*} with \texttt{states (T,4)}, \texttt{actions (T,2)},
+         attrs $Q,R,x_{\text{goal}}$} \\[3pt]
+$\big\downarrow$ \\[3pt]
+\flowbox{Stage 4 \;:\; \texttt{train\_diffusion\_policy.py}}
+        {windowing + normalization, behavioural-cloning training
+         \quad$\longrightarrow$\quad writes\\
+         \texttt{diffusion\_policy.pt} \;+\; \texttt{norm\_stats.json}} \\[3pt]
+$\big\downarrow$ \textit{\footnotesize (imports the model classes from)} \\[3pt]
+\flowbox{Stage 3 \;:\; \texttt{diffusion\_policy.py}}
+        {model library: \texttt{Scheduler}, \texttt{MLP} /
+         \texttt{TrajectoryTransformer}, \texttt{DiffusionPolicy}} \\
+\end{tabular}
+\caption{End-to-end data flow. Each downward arrow between Stages~1, 2 and~4 is a
+file-on-disk interface, so the stages are decoupled and independently runnable.
+Stage~3 is the shared model library that the trainer (and the evaluation script)
+build their networks from.}
+\label{fig:flow}
+\end{figure}
+
+The state is $x = [q_1,\,q_2,\,\dot q_1,\,\dot q_2]^\top \in \mathbb{R}^4$ and
+the control is the joint-torque vector $u = [u_1,\,u_2]^\top \in \mathbb{R}^2$,
+bounded by a hard actuator limit $|u_i| \le \tau_{\max} = 0.07~\mathrm{Nm}$.
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{The Plant Model}
+\label{sec:plant}
+
+All four stages share one plant: the system-identified ``cloudpendulum'' model.
+\file{kux\_generation.py} encodes it directly; the dataset generator imports the
+same parameters \code{P} from \file{rollout\_tvlqr.py}. The continuous dynamics
+follow the standard manipulator equation
+\begin{equation}
+M(x)\,\ddot q \;+\; C(x)\,\dot q \;+\; f(\dot q) \;=\; u \;+\; G(x),
+\label{eq:manip}
+\end{equation}
+with $q = [q_1,q_2]^\top$. The mass matrix, Coriolis matrix and gravity vector are
+\begin{align}
+M(x) &=
+\begin{bmatrix}
+I_1+I_2+l_1^2 m_2 + 2 l_1 m_2 l_{c2}\cos q_2 + g_{r1}^2 I_r + I_r &\; I_2 + l_1 m_2 l_{c2}\cos q_2\\
+I_2 + l_1 m_2 l_{c2}\cos q_2 &\; I_2
+\end{bmatrix},\\[4pt]
+C(x) &=
+\begin{bmatrix}
+-2\dot q_2\,k\sin q_2 & -\dot q_2\,k\sin q_2\\
+\phantom{-}\dot q_1\,k\sin q_2 & 0
+\end{bmatrix},\quad k = l_1 m_2 l_{c2},\\[4pt]
+G(x) &=
+\begin{bmatrix}
+-g\,m_1 l_{c1}\sin q_1 - g\,m_2(l_1\sin q_1 + l_{c2}\sin(q_1+q_2))\\
+-g\,m_2 l_{c2}\sin(q_1+q_2)
+\end{bmatrix}.
+\end{align}
+Friction is a viscous term plus an $\arctan$-smoothed Coulomb term (the smooth
+surrogate for $\mathrm{sign}(\dot q)$, with \code{FRICTION\_SCALE}$=100$):
+\begin{equation}
+f(\dot q) = \begin{bmatrix} b_1\dot q_1 + \mu_1\arctan(100\,\dot q_1)\\
+b_2\dot q_2 + \mu_2\arctan(100\,\dot q_2)\end{bmatrix}.
+\end{equation}
+Solving \eqref{eq:manip} for the accelerations gives the first-order field
+$\dot x = f(x,u) = [\dot q,\; M(x)^{-1}(u + G(x) - C(x)\dot q - f(\dot q))]$,
+implemented in \code{dynamics(x,u)} and integrated with a fixed-step RK4
+\code{rk4\_step}. The identified parameters are listed in Table~\ref{tab:params}.
+
+\begin{table}[h]
+\centering
+\caption{System-identified model parameters \code{P} (\file{kux\_generation.py}).}
+\label{tab:params}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+$m_1 = 0.1055$ kg & $m_2 = 0.0762$ kg & $l_1 = l_2 = 0.05$ m & $l_{c1}=0.05$ m\\
+$l_{c2} = 0.0367$ m & $I_1 = 4.62\!\times\!10^{-4}$ & $I_2 = 2.37\!\times\!10^{-4}$ & $g = 9.81$\\
+$b_1 \approx 0$ & $b_2 = 5.1\!\times\!10^{-4}$ & $\mu_1 = 3.05\!\times\!10^{-3}$ & $\mu_2 = 7.8\!\times\!10^{-4}$\\
+$g_{r1} = 403$ & $g_{r2} = 379$ & $I_r = 0$ & $\tau_{\max} = 0.07$ Nm\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Symmetry.} The plant is invariant under the left--right reflection
+$x \mapsto -x$, $u \mapsto -u$: because the kinematics enter only through
+$\sin/\cos$ and friction is odd in velocity, $f(-x,-u) = -f(x,u)$. Hence any
+valid trajectory $(x(t),u(t))$ has a mirror twin $(-x(t),-u(t))$ that swings up
+to the \emph{same} goal from the other side, and the TVLQR gains $K$ are
+identical at the mirrored point. The dataset generator exploits this to double
+its demonstrations for free (Section~\ref{sec:dataset}).
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Stage 1 --- Trajectory Optimization and TVLQR (\file{kux\_generation.py})}
+\label{sec:kux}
+
+For each cost configuration this module (1) solves a direct-collocation
+trajectory-optimization problem with IPOPT to obtain the optimal
+state/control trajectories $(x,u)$, then (2) linearises about that trajectory and
+runs a backward Riccati pass to obtain the time-varying feedback gains $K$.
+
+\subsection{The optimization problem}
+With horizon $T = 4$ s and step $dt = 0.05$ s, the trajectory is discretised into
+$N = T/dt + 1 = 81$ nodes. The decision vector stacks all states then all
+controls,
+\[
+z = [\,x_0,\dots,x_{N-1},\;u_0,\dots,u_{N-1}\,] \in \mathbb{R}^{N n_x + N n_u},
+\qquad n_x = 4,\; n_u = 2.
+\]
+The cost is a quadratic running cost with a separate terminal weight,
+\begin{equation}
+J(z) = \tfrac12\sum_{k=0}^{N-1}\Big[(x_k - x_g)^\top Q (x_k - x_g) + u_k^\top R u_k\Big]
+\;+\; (x_{N-1}-x_g)^\top Q_{\text{fin}} (x_{N-1}-x_g),
+\end{equation}
+implemented in \code{total\_objective}; its closed-form gradient
+\code{total\_objective\_deriv} is supplied to IPOPT analytically (the per-node
+gradients $2Q(x_k-x_g)$, $2Ru_k$ are computed with \code{jax.vmap}). The dynamics
+are imposed as equality constraints by \emph{trapezoidal collocation} between
+neighbouring nodes,
+\begin{equation}
+x_{k+1} - x_k - \tfrac{dt}{2}\big(f(x_k,u_k) + f(x_{k+1},u_{k+1})\big) = 0,
+\label{eq:trap}
+\end{equation}
+together with the boundary constraints $x_0 = x_0^{\text{start}}$ and
+$x_{N-1} = x_g$. The full constraint vector and its Jacobian (via
+\code{jax.jacobian}) are assembled in \code{constraints}. Controls are box-bounded
+to $\pm\tau_{\max}$; states are free.
+
+\begin{lstlisting}[caption={Trapezoidal-collocation defect (the dynamics
+constraint between two nodes).},captionpos=b]
+def trapezoidal_collocation(x_k, x_kp1, u_k, u_kp1, dynamics, dt):
+    f_k   = dynamics(x_k,   u_k)
+    f_kp1 = dynamics(x_kp1, u_kp1)
+    return (x_kp1 - x_k - (dt / 2.0) * (f_k + f_kp1)).flatten()
+\end{lstlisting}
+
+The \code{Problem} class bakes a specific $(Q,R,Q_{\text{fin}},x_0,x_g)$ into
+JIT-compiled JAX callbacks (\code{objective}, \code{gradient}, \code{constraints},
+\code{jacobian}) that conform to the \code{cyipopt.Problem} interface. A linear
+interpolation $x_0 \!\to\! x_g$ with zero controls warm-starts the solver
+(\code{solve\_trajectory}). IPOPT runs with \code{max\_iter}$=100$, \code{tol}$=10^{-3}$.
+
+\subsection{Time-varying LQR gains}
+Stabilising the optimal trajectory requires feedback. The module discretises the
+linearised dynamics \emph{through the RK4 integrator} by differentiating each RK4
+stage with the chain rule (\code{get\_discrete\_matrices}), producing the
+discrete sensitivity matrices $A_d, B_d$ at every node --- this is more faithful
+than an Euler discretisation of the continuous Jacobians $A,B$ obtained from
+\code{jax.jacfwd}. The finite-horizon discrete Riccati recursion is then swept
+backward from the terminal cost $P_{N-1} = Q_{\text{fin}}$:
+\begin{align}
+S_k   &= R + B_d^\top P_{k+1} B_d, \\
+K_k   &= S_k^{-1} B_d^\top P_{k+1} A_d, \\
+P_k   &= Q + A_d^\top P_{k+1} (A_d - B_d K_k).
+\end{align}
+The backward sweep is vectorised with \code{jax.lax.scan} over the reversed
+trajectory (\code{compute\_tvlqr\_gains}), yielding gains $K \in
+\mathbb{R}^{(N-1)\times n_u \times n_x}$.
+
+\subsection{Outputs}
+Each configuration is written to its own folder named by the $Q$/$R$ diagonals
+and the goal (e.g.\ \texttt{Q\_100\_100\_100\_100\_\_R\_0p01\_0p01\_\_xgoal\_3p142\_0\_0\_0/}),
+containing \texttt{trajectory.csv} ($x$), \texttt{inputs.csv} ($u$),
+\texttt{K\_matrix.npy} ($K$), and \texttt{config.json} (metadata, including the
+IPOPT status and the achieved final state). The configuration sweep fixes
+$Q = \mathrm{diag}(100,100,100,100)$ and sweeps the control weight
+$R \in \{0.01,\,10,\,50,\,100,\,200,\,500\}\cdot I_2$ across two goals
+$x_g \in \{[\pi,0,0,0],\,[\pi,\pi,0,0]\}$ --- twelve references in total.
+
+\begin{figure}[h]
+\centering
+\begin{subfigure}{0.49\textwidth}
+  \includegraphics[width=\linewidth]{figures/states_upright.png}
+  \caption{Joint angles and velocities.}
+\end{subfigure}\hfill
+\begin{subfigure}{0.49\textwidth}
+  \includegraphics[width=\linewidth]{figures/torques_upright.png}
+  \caption{Commanded joint torques (saturating at $\pm 0.07$ Nm).}
+\end{subfigure}
+\caption{Example optimal swing-up to the upright goal $x_g = [\pi,0,0,0]$ for the
+low control-weight configuration $R = 0.01\,I_2$. Plots are emitted by
+\code{save\_plots}.}
+\label{fig:traj}
+\end{figure}
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Stage 2 --- Expert Dataset Generation (\file{generate\_tvlqr\_dataset\_kux.py})}
+\label{sec:dataset}
+
+This module turns the open-loop references of Stage~1 into a behavioural-cloning
+dataset by \emph{rolling out} the TVLQR controllers in closed loop through the
+identified plant and logging the $(\text{observed state},\text{commanded torque})$
+stream at the control rate $dt_{\text{ctrl}} = 0.05$ s. Because every logged pair
+is produced by simulating the actual plant, each sample is dynamically valid by
+construction.
+
+\subsection{Reference discovery and the hold gain}
+\code{discover\_configs} scans \texttt{optimal\_trajectories/} for every folder
+holding the full quartet (\texttt{trajectory.csv}, \texttt{inputs.csv},
+\texttt{K\_matrix.npy}, \texttt{config.json}); \code{load\_reference} reads back
+$(x_{\text{ref}}, u_{\text{ref}}, K, Q, R, x_g)$.
+
+A subtlety: the saved $K$ is the \emph{finite-horizon} TVLQR gain, which ends
+with the swing-up and cannot hold the unstable inverted goal past the last node.
+The generator therefore solves the \emph{infinite-horizon} LQR at the goal once,
+\code{K\_hold = lqr\_gain(xgoal, Q, R, dt=dt\_sim)}, and hands it to every rollout
+so the upright hold persists. By the plant symmetry the same $K_{\text{hold}}$
+stabilises the mirrored goal $-x_g$. Critically the hold gain is designed for the
+\emph{inner simulation step} $dt_{\text{sim}}$, not the control step --- the
+inverted hold is not stabilisable at the 20\,Hz control rate, so the rollout
+re-closes the hold loop at $dt_{\text{sim}}$.
+
+\subsection{Two integration rates}
+The references are 41-node, $0.05$ s trajectories whose swing-ups are violent
+($\dot q_2 > 40$ rad/s). Integrating the closed loop at the full $0.05$ s control
+step destabilises tracking, so the rollout sub-steps RK4 at
+$dt_{\text{sim}} = 0.005$ s (the \code{--dt-sim} flag) while still commanding and
+\emph{logging} actions at the $0.05$ s control rate. This separation of the
+control rate from the integration rate is what makes the otherwise-fragile
+references trackable.
+
+\subsection{DAgger-style noise, mirroring, and hold rollouts}
+Three mechanisms broaden the state coverage of the demonstrations:
+\begin{description}[leftmargin=1.4em,itemsep=2pt]
+\item[DAgger noise.] On a fraction of swing-up rollouts (every $\sim\!2/3$ of
+side-pairs) state noise of std $0.05$ is injected for coverage of off-nominal
+states, but the \emph{clean} commanded torque is logged as the supervised target.
+The noise latches \emph{off} once the rollout first reaches the goal
+(\code{noise\_until\_upright=True}) so the fragile hold stays clean.
+\item[Mirroring.] Each reference is also rolled out mirrored, $(-x_{\text{ref}},
+-u_{\text{ref}})$, swinging up to the same goal from the other side. Episodes
+alternate sides ($+1/-1$) so the kept set is left--right balanced; each rollout
+records its \code{side} attribute.
+\item[Goal-hold rollouts.] In \code{mode=both}, additional episodes start
+\emph{perturbed} around the goal equilibrium and roll out the stabilising gain,
+recording the deviation\,$\rightarrow$\,corrective-torque map. Without these the
+policy would only ever see the exact fixed point and could never learn to recover
+from small deviations.
+\end{description}
+Every reference (and its mirror) is self-checked --- it must still swing up and
+hold in the plant model --- before use; a reference that fails is skipped with a
+warning rather than aborting the whole sweep.
+
+\subsection{Output format}
+A single HDF5 file is written (e.g.\
+\texttt{expert\_trajectories\_kux\_swingup\_hold\_mirrored.h5}) with one group
+\texttt{traj\_\{idx\}} per kept rollout. Group indices are global across all
+configurations. Each group holds \texttt{states (T,4)} and \texttt{actions (T,2)},
+plus per-group attributes that record the expert identity: $Q$, $R$, $x_{\text{goal}}$,
+the source config folder name, the initial state, the injected noise std, the
+\code{side}, and the \code{kind} (\texttt{swingup}/\texttt{hold}). This is exactly
+the format the trainer consumes, and the $x_{\text{goal}}$ attribute is what later
+enables (in principle) goal-conditioning.
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Stage 3 --- The Diffusion Policy Model (\file{diffusion\_policy.py})}
+\label{sec:model}
+
+The policy is a conditional DDPM over short action sequences, after
+Chi et al.\ (2023). It \emph{denoises} a sampled Gaussian into an action chunk
+$a \in \mathbb{R}^{H\times n_u}$, conditioned on a clean (un-noised) context
+vector. The module provides a scheduler, two interchangeable backbones, and the
+training/sampling logic.
+
+\subsection{Forward process and the scheduler}
+\code{Scheduler} uses a linear $\beta$ schedule from $\beta_0 = 3\!\times\!10^{-4}$
+to $\beta_{\!T} = 0.03$ over $T = 100$ steps, with $\alpha_t = 1-\beta_t$ and
+$\bar\alpha_t = \prod_{s\le t}\alpha_s$. The forward (noising) process samples
+\begin{equation}
+q(x_t\mid x_0) = \mathcal N\!\big(\sqrt{\bar\alpha_t}\,x_0,\;(1-\bar\alpha_t) I\big),
+\qquad
+x_t = \sqrt{\bar\alpha_t}\,x_0 + \sqrt{1-\bar\alpha_t}\,\varepsilon,\;\;\varepsilon\sim\mathcal N(0,I),
+\end{equation}
+returning both $x_t$ and the noise $\varepsilon$ (\code{add\_noise}). Only the
+\emph{actions} are noised; the conditioning context is never noised.
+
+\subsection{Noise-prediction backbones}
+Both backbones share the contract
+\code{forward(a\_noisy, t, cond) -> predicted\_noise}, so they are drop-in
+replacements.
+\begin{description}[leftmargin=1.4em,itemsep=3pt]
+\item[\code{MLP}.] Flattens the action chunk to $H\!\cdot\!n_u$, embeds the scalar
+timestep and the conditioning vector with small SiLU MLPs, concatenates, and maps
+through a 3-hidden-layer SiLU network back to $H\!\cdot\!n_u$. It ignores the
+temporal structure of the action chunk.
+\item[\code{TrajectoryTransformer}.] Treats the $H$ action steps as a sequence of
+tokens with learned positional embeddings, and \emph{prepends} two context tokens
+--- a sinusoidal timestep embedding and the conditioning embedding --- so every
+action token attends to them. A pre-norm \code{TransformerEncoder} (GELU)
+processes the length-$(H{+}2)$ sequence; only the $H$ action positions are
+projected back to $n_u$. This preserves the temporal structure the MLP discards.
+\end{description}
+
+\subsection{The \code{DiffusionPolicy} class}
+This wraps a scheduler and a backbone and exposes training, sampling, and a
+control-convenience method.
+\begin{description}[leftmargin=1.4em,itemsep=3pt]
+\item[\code{train}.] For each batch it draws $t\sim\mathcal U\{1,\dots,T\}$, noises
+the actions, and minimises the noise-prediction MSE
+$\|\varepsilon - \varepsilon_\theta(x_t,t,\text{cond})\|^2$. It uses Adam with a
+per-step cosine-annealing LR schedule, automatic mixed precision on CUDA, and
+maintains an \textbf{exponential moving average} (EMA, decay $0.999$) of the
+weights.
+\item[\code{sample}.] Runs reverse DDPM ancestral sampling for one action chunk
+per conditioning vector. The flag \code{stochastic=False} drops the per-step
+ancestral noise (returns the posterior mean each step), which sharply lowers
+action variance --- important for stabilising the unstable upright hold, where
+injected sampling noise would perturb the torque and topple the pendulum.
+\item[\code{act}.] A closed-loop convenience wrapper: it takes the last $k$
+observed states (and optional goal), builds the conditioning vector, samples a
+chunk, and returns the first \code{n\_exec} actions.
+\end{description}
+
+\paragraph{Why EMA for control.} The EMA copy is a smoother estimate of the
+trained function than the last-step weights. Near the unstable upright
+equilibrium this yields a more \emph{consistent} learned gain (less jitter), which
+is what lets the policy balance. The trainer saves the EMA weights as the
+inference checkpoint.
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Stage 4 --- Training the Policy (\file{train\_diffusion\_policy.py})}
+\label{sec:train}
+
+This module loads the HDF5 expert dataset, converts it into supervised
+$(\text{cond}, \text{action\_seq})$ windows, and trains the diffusion policy.
+
+\subsection{Feature engineering and conditioning}
+Raw angles are mapped to wrap-free angular features to avoid the
+$2\pi$ discontinuity, and velocities/actions are min--max normalised to $[-1,1]$
+(stats saved to \texttt{norm\_stats.json} for inference):
+\begin{equation}
+x \mapsto \big[\sin q_1,\ \cos q_1,\ \sin q_2,\ \cos q_2,\ \hat{\dot q}_1,\ \hat{\dot q}_2\big]
+\in \mathbb{R}^{6}\quad(\code{NX\_FEAT}=6).
+\end{equation}
+For every time index $i$ in a trajectory the dataset forms a conditioning vector
+from the last $k = 6$ feature vectors (left-padded at the start) and, when
+\code{USE\_GOAL=True}, appends the per-trajectory goal feature read from the HDF5
+\texttt{xgoal} attribute:
+\[
+\text{cond} = \big[\text{hist}_{i-k+1:i}\big]\ \Vert\ \text{goal\_feat}
+\;\in\;\mathbb{R}^{k\cdot 6\,(+\,6)}.
+\]
+The target is the next $H = 10$ normalised actions (right-padded by repetition at
+the trajectory's end).
+
+\subsection{Architecture selection and checkpointing}
+The architecture is CLI-selectable (\code{--arch mlp|transformer}, default
+\code{transformer}) and \textbf{self-describing in the checkpoint}: the network
+class name and its exact kwargs are stored under \code{config["net\_kwargs"]}, so
+the evaluation script can rebuild the identical network with no manual edits. The
+checkpoint stores both the EMA weights (\code{model\_state}, used for inference)
+and the raw weights (\code{model\_state\_raw}), along with all conditioning
+metadata ($k$, $n_x$, \code{nx\_feat}, \code{use\_goal}, horizon, timesteps).
+Periodic per-epoch snapshots are written every \code{CKPT\_EVERY}$=20$ epochs.
+
+\begin{table}[h]
+\centering
+\caption{Default training hyperparameters (\file{train\_diffusion\_policy.py}).}
+\label{tab:hyper}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+History $k = 6$ & Horizon $H = 10$ & Diffusion steps $T = 100$ & Epochs $= 60$\\
+Batch $= 512$ & LR $= 10^{-4}$ (cosine) & Seed $= 42$ & EMA decay $= 0.999$\\
+MLP hidden $= 512$ & TF $d_{\text{model}} = 192$ & TF heads/layers $= 4/5$ & TF dropout $= 0.2$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Note on synthetic holds.} An older mechanism that synthesised
+hold samples by repeating each trajectory's final state/action is now disabled
+(\code{HOLD\_STEPS}$=0$): it taught the exact fixed point but not how to recover.
+Real hold demonstrations now come from the Stage-2 goal-hold rollouts, which
+capture the deviation$\rightarrow$corrective-torque map directly.
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Deviations from Vanilla Diffusion: The Implemented Tricks}
+\label{sec:tricks}
+
+A textbook DDPM (Ho et al.\ 2020) is \emph{unconditional}: it samples
+$t\sim\mathcal U\{1,\dots,T\}$, noises the data $x_0$, trains a network to predict
+the noise under MSE, and generates by ancestral reverse sampling from
+$\mathcal N(0,I)$. The pipeline keeps that backbone but layers a number of
+modifications that adapt it from image-style generation to \emph{closed-loop
+control of an unstable, torque-limited plant}. Table~\ref{tab:tricks} summarises
+them; the subsections below explain each and point to where it lives in the code.
+
+\begin{table}[h]
+\centering
+\caption{Vanilla DDPM vs.\ the control-oriented diffusion policy implemented here.}
+\label{tab:tricks}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}L{4.3cm} L{5.0cm} L{5.0cm}@{}}
+\toprule
+\textbf{Aspect} & \textbf{Vanilla DDPM} & \textbf{This implementation} \\
+\midrule
+What is diffused & the whole data sample (e.g.\ an image), unconditional &
+an \emph{action chunk} $a\in\mathbb R^{H\times n_u}$, conditioned on clean state
+history $+$ goal \\
+Diffusion length & $T\approx 1000$, $\beta\!\in[10^{-4},2\!\times\!10^{-2}]$ &
+short $T=100$, tuned $\beta\!\in[3\!\times\!10^{-4},3\!\times\!10^{-2}]$ \\
+Timestep input & integer index $t$ & normalized scalar $t/T\in(0,1)$ \\
+Inference weights & last-step weights & EMA weights (decay $0.999$) \\
+Reverse sampling & always stochastic (ancestral noise) &
+optional \emph{deterministic} (posterior mean) for the unstable hold \\
+Execution & generate once & receding horizon: predict $H$, apply first $n_{\text{exec}}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Reformulation: what is actually diffused}
+\begin{description}[leftmargin=1.4em,itemsep=3pt]
+\item[Conditional, action-only diffusion.] Only the actions are noised; the
+conditioning context (state history $+$ goal) is passed \emph{clean} and is never
+corrupted (\code{train}: \code{z\_t, eps = scheduler.add\_noise(action\_seq, t)};
+\code{cond} bypasses the scheduler). This turns the generative model into a policy
+$p_\theta(a\mid \text{cond})$ rather than an unconditional sampler --- the
+Diffusion-Policy formulation.
+\item[Action chunking (sequence diffusion).] The diffused variable is a whole
+$H$-step action sequence, not a single action. The network treats the chunk as a
+unit, which lets it produce temporally consistent, multi-modal plans. At run time
+\code{act} executes only the first \code{n\_exec} actions and re-plans --- a
+receding-horizon scheme, not one-shot generation.
+\end{description}
+
+\subsection{Representation tricks that make the Gaussian prior appropriate}
+DDPM denoises toward an $\mathcal N(0,I)$-scaled target, so the data must be put on
+that scale (\file{train\_diffusion\_policy.py}):
+\begin{description}[leftmargin=1.4em,itemsep=3pt]
+\item[Angular (wrap-free) features.] Raw angles are replaced by
+$[\sin q_1,\cos q_1,\sin q_2,\cos q_2]$ so the network never sees a $2\pi$
+discontinuity in the conditioning (\code{\_state\_to\_features}).
+\item[Min--max normalization to {$[-1,1]$}.] Velocities and the diffused
+\emph{actions} are linearly rescaled to $[-1,1]$ (\code{\_norm\_action}); this
+matches the unit scale the diffusion prior assumes and keeps the noise schedule
+meaningful. The exact min/max are saved to \texttt{norm\_stats.json} and inverted
+at inference (\code{denorm\_action}).
+\item[History $+$ goal conditioning.] The context is the last $k$ feature vectors
+concatenated with the per-trajectory goal feature, with left-padding at the start
+of a trajectory and right-padding (repeat the last action) at the end.
+\end{description}
+
+\subsection{Training-loop tricks}
+\begin{description}[leftmargin=1.4em,itemsep=3pt]
+\item[EMA weights as the inference model.] An exponential moving average of the
+parameters (decay $0.999$) is maintained every step (\code{\_update\_ema}) and is
+what \code{save\_checkpoint} stores as \code{model\_state}. The EMA copy is a
+smoother estimate of the trained function; near the unstable upright equilibrium
+this yields a more \emph{consistent} learned gain (less jitter), which is what
+allows the policy to balance at all.
+\item[Short, tuned noise schedule.] $T=100$ steps (not $\sim\!1000$) with a linear
+$\beta$ from $3\!\times\!10^{-4}$ to $3\!\times\!10^{-2}$ keeps reverse sampling
+cheap enough to run inside a control loop while still denoising cleanly
+(\code{Scheduler}).
+\item[Normalized continuous timestep.] The network is fed $t/T\in(0,1)$ rather
+than the integer index (\code{t\_normalized = t / timesteps}), so the timestep
+embedding sees a bounded, scale-free input. (The Transformer's sinusoidal
+embedding multiplies this by $1000$ to recover useful frequencies.)
+\item[Restricted $t$ range.] Training draws $t\sim\mathcal U\{1,\dots,T{-}1\}$
+(\code{torch.randint(1, timesteps)}): $t=0$ is the clean sample (nothing to
+denoise) and is skipped.
+\item[Per-step cosine-annealing LR.] The LR follows a cosine schedule advanced
+\emph{every batch}, with $T_{\max}=\text{epochs}\times|\text{loader}|$
+(\code{\_lr\_scheduler.step()} inside the batch loop), rather than the constant or
+per-epoch LR of a minimal trainer.
+\item[Mixed-precision training.] On CUDA the forward/backward run under
+\code{autocast} with a \code{GradScaler} --- a speed optimization that leaves the
+algorithm unchanged.
+\end{description}
+
+\subsection{Inference / sampling tricks}
+\begin{description}[leftmargin=1.4em,itemsep=3pt]
+\item[Deterministic sampling --- the headline control trick.] The reverse process
+takes the DDPM posterior \emph{mean} at each step,
+\begin{equation}
+a_{t-1} = \frac{1}{\sqrt{1-\beta_t}}\,a_t
+\;-\;\frac{\beta_t}{\sqrt{1-\beta_t}\,\sqrt{1-\bar\alpha_t}}\;
+\varepsilon_\theta(a_t,t,\text{cond}),
+\end{equation}
+and with \code{stochastic=False} \emph{omits} the ancestral noise term entirely.
+Vanilla DDPM always injects $\sqrt{\beta_t}\,z$; here that injected torque noise
+would perturb the command and topple the pendulum, so for the unstable upright
+hold the posterior mean is used to drive the action variance toward zero.
+\item[Fixed-large posterior variance.] When stochasticity \emph{is} wanted, the
+added noise uses $\sigma_t = \sqrt{\beta_t}$ (the ``fixed-large'' variance), and
+only for $t>1$ --- the final denoising step ($t=1$) is always noise-free
+(\code{sample}).
+\item[Receding-horizon execution.] \code{act} predicts the full horizon but
+returns only the first \code{n\_exec} actions, so the policy re-conditions on fresh
+observations frequently instead of committing to a whole open-loop chunk.
+\end{description}
+
+\subsection{Backbone tricks}
+\begin{description}[leftmargin=1.4em,itemsep=3pt]
+\item[A shared \code{forward(a\_noisy, t, cond)} contract] lets the MLP and the
+Transformer be swapped with a one-line change, and makes the choice
+self-describing in the checkpoint.
+\item[Transformer conditioning by context tokens.] Instead of concatenating $t$
+and \code{cond} into the input, the Transformer \emph{prepends} them as two extra
+tokens so every action token attends to them; only the $H$ action positions are
+projected back to $n_u$. It uses pre-norm GELU encoder layers and small-init
+learned positional embeddings.
+\end{description}
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Interfaces and Data Contracts}
+\label{sec:interfaces}
+
+The stages communicate only through files, which keeps them decoupled
+(Figure~\ref{fig:flow}). The contracts are:
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item \textbf{Stage 1 $\rightarrow$ 2:} a reference folder
+$\{$\texttt{trajectory.csv}~$(N,4)$, \texttt{inputs.csv}~$(N,2)$,
+\texttt{K\_matrix.npy}~$(N{-}1,2,4)$, \texttt{config.json}$\}$. The
+\code{load\_reference} reader in Stage~2 mirrors the \code{save\_trajectory}
+writer in Stage~1.
+\item \textbf{Stage 2 $\rightarrow$ 4:} an HDF5 file of \texttt{traj\_*} groups,
+each \texttt{states (T,4)} + \texttt{actions (T,2)} with $Q/R/x_{\text{goal}}$
+attributes. Stage~4's \code{DiffusionPolicyDataset} reads exactly this layout.
+\item \textbf{Stage 4 $\rightarrow$ 3 (inference):} a self-describing checkpoint
+(\code{net\_kwargs}, EMA weights) plus \texttt{norm\_stats.json}. The
+\code{build\_network}/\code{save\_checkpoint} pair is the single source of truth
+that lets evaluation rebuild the model from Stage~3 classes.
+\end{itemize}
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Known Limitations}
+\label{sec:limits}
+
+The documentation in the modules and the project's working notes record several
+honest caveats about the current controller:
+\begin{itemize}[leftmargin=1.4em,itemsep=3pt]
+\item \textbf{Goal-conditioning is presently nominal.} Although the dataset tags
+each demonstration with its $x_{\text{goal}}$ and the trainer appends a goal
+feature, the learned policy can effectively ignore its goal input when the
+demonstrations are dominated by a single goal --- the goal feature must actually
+\emph{vary} across the dataset (multiple $x_g$ in the sweep) for conditioning to
+take effect.
+\item \textbf{Closed-loop behavioural-cloning fragility.} A policy that imitates
+the TVLQR expert can still drift in closed loop due to covariate shift (the policy
+visits states the expert rarely demonstrated). The DAgger noise, mirroring, and
+goal-hold rollouts of Stage~2 are explicitly there to mitigate this, but they do
+not eliminate it.
+\item \textbf{The inverted hold needs a fast rate.} The unstable upright hold is
+not stabilisable at the $20$\,Hz control rate; Stage~2 re-closes the hold loop at
+the inner $dt_{\text{sim}}$, and a policy that only commands at $20$\,Hz cannot
+exactly reproduce that fast feedback. Deterministic sampling
+(\code{stochastic=False}) and the EMA weights are the model-side mitigations.
+\end{itemize}
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+\label{sec:conclusion}
+The four modules form a clean, file-decoupled imitation-learning pipeline:
+classical trajectory optimization and TVLQR build a provably-valid expert
+(\file{kux\_generation.py}); closed-loop rollouts with symmetry, DAgger noise and
+goal-hold coverage harvest demonstrations (\file{generate\_tvlqr\_dataset\_kux.py});
+a conditional diffusion model with MLP/Transformer backbones provides an
+expressive multi-modal action generator (\file{diffusion\_policy.py}); and a
+self-describing trainer fits it by noise-prediction behavioural cloning
+(\file{train\_diffusion\_policy.py}). The design choices throughout --- analytic
+gradients, RK4-consistent TVLQR discretisation, the separation of control and
+integration rates, EMA weights, and deterministic sampling for the unstable hold
+--- are all driven by the difficulty of stabilising an underactuated,
+torque-limited double pendulum at an unstable equilibrium.
+
+\end{document}

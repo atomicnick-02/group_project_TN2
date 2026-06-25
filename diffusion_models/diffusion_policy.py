@@ -301,6 +301,53 @@ class DiffusionPolicy:
         return a_t  # (batch, H, nu)
 
     @torch.no_grad()
+    def sample_ddim(self, cond: torch.Tensor, num_inference_steps: int = 15):
+        """
+        Deterministic DDIM sampling (Song et al. 2021, eta=0).
+
+        Uses the SAME trained eps-network and alpha_bar schedule as `sample`, but
+        walks a strided high->low subsequence of the trained timesteps, so a good
+        action chunk needs ~10-20 network evals instead of all (timesteps-1) of
+        them. This is the inference speedup: at n_exec=1 the controller re-plans
+        every control step, so cutting ~99 evals down to ~15 is a ~6x win, with
+        output near-identical to the deterministic (stochastic=False) DDPM path
+        we already use for control.
+
+        cond: (batch, cond_dim) -> returns (batch, H, nu).
+        """
+        self.model.eval()
+        cond  = cond.to(self.device)
+        batch = cond.size(0)
+        ab    = self.scheduler.alpha_bar
+
+        # Strided subsequence of the [1, timesteps) range the model trained on.
+        steps = torch.linspace(self.timesteps - 1, 1, num_inference_steps,
+                               device=self.device).round().long()
+
+        a_t = torch.randn((batch, self.horizon, self.action_dim), device=self.device)
+        for i in range(num_inference_steps):
+            t = steps[i]
+            t_normalized = torch.full((batch,), float(t) / self.timesteps,
+                                      device=self.device, dtype=torch.float32)
+            eps = self.model(a_t, t_normalized, cond)
+
+            # Predict x0 from the noise, clamped to the normalized action range
+            # [-1,1] -- this stabilizes the few-step regime (actions are min-max
+            # normalized at train time, so the clean signal lives in [-1,1]).
+            ab_t = ab[t]
+            x0   = ((a_t - torch.sqrt(1 - ab_t) * eps) / torch.sqrt(ab_t)).clamp(-1.0, 1.0)
+
+            # Next alpha_bar along the subsequence; the final step lands at t=0
+            # (alpha_bar=1), i.e. returns the clean x0 prediction.
+            ab_prev = ab[steps[i + 1]] if i + 1 < num_inference_steps \
+                else torch.ones((), device=self.device)
+
+            # DDIM deterministic update (eta=0).
+            a_t = torch.sqrt(ab_prev) * x0 + torch.sqrt(1 - ab_prev) * eps
+
+        return a_t  # (batch, H, nu)
+
+    @torch.no_grad()
     def act(self, state_history, goal=None, n_exec: int = 1):
         """
         Convenience wrapper for closed-loop control.

@@ -440,12 +440,7 @@ def save_plots(out_dir, time_span, x_traj, u_traj):
 UPRIGHT = [float(np.pi), 0.0, 0.0, 0.0]
 
 Q_SWEEP = [
-    [10, 10, 1, 1],
-    [10, 10, 10, 10],
-    [100, 100, 1, 1],
-    [100, 100, 10, 10],
     [100, 100, 100, 100],
-
 ]
 
 R_SWEEP = [
@@ -455,9 +450,6 @@ R_SWEEP = [
     [100, 100],
     [200, 200],
     [500, 500],
-    [1000, 1000],
-
-
 ]
 
 XGOAL_SWEEP = [
@@ -477,7 +469,7 @@ SAVE_PLOTS = True
 
 def main():
     nx, nu = 4, 2
-    T, dt = 2.0, 0.05
+    T, dt = 4.0, 0.05
     steps = int(T / dt) + 1
     time_span = np.linspace(0, T, steps)
     x0 = jnp.array([0.0, 0.0, 0.0, 0.0])

@@ -1,0 +1,63 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand*\HyPL@Entry[1]{}
+\HyPL@Entry{0<</S/D>>}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{3}{section.1}\protected@file@percent }
+\newlabel{sec:intro}{{1}{3}{Introduction}{section.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Overview of the Pipeline}{4}{section.2}\protected@file@percent }
+\newlabel{sec:overview}{{2}{4}{Overview of the Pipeline}{section.2}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces The four modules and their roles in the pipeline. Paths are relative to the project root; the first two modules live in \texttt  {double\_pendulum/}.}}{4}{table.caption.2}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:modules}{{1}{4}{The four modules and their roles in the pipeline. Paths are relative to the project root; the first two modules live in \file {double\_pendulum/}}{table.caption.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces End-to-end data flow. Each downward arrow between Stages~1, 2 and~4 is a file-on-disk interface, so the stages are decoupled and independently runnable. Stage~3 is the shared model library that the trainer (and the evaluation script) build their networks from.}}{4}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:flow}{{1}{4}{End-to-end data flow. Each downward arrow between Stages~1, 2 and~4 is a file-on-disk interface, so the stages are decoupled and independently runnable. Stage~3 is the shared model library that the trainer (and the evaluation script) build their networks from}{figure.caption.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}The Plant Model}{5}{section.3}\protected@file@percent }
+\newlabel{sec:plant}{{3}{5}{The Plant Model}{section.3}{}}
+\newlabel{eq:manip}{{1}{5}{The Plant Model}{equation.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces System-identified model parameters \texttt  {P} (\texttt  {kux\_generation.py}).}}{5}{table.caption.4}\protected@file@percent }
+\newlabel{tab:params}{{2}{5}{System-identified model parameters \code {P} (\file {kux\_generation.py})}{table.caption.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Symmetry.}{5}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Stage 1 --- Trajectory Optimization and TVLQR (\texttt  {kux\_generation.py})}{6}{section.4}\protected@file@percent }
+\newlabel{sec:kux}{{4}{6}{Stage 1 --- Trajectory Optimization and TVLQR (\file {kux\_generation.py})}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}The optimization problem}{6}{subsection.4.1}\protected@file@percent }
+\newlabel{eq:trap}{{7}{6}{The optimization problem}{equation.7}{}}
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {1}{\ignorespaces Trapezoidal-collocation defect (the dynamics constraint between two nodes).}}{6}{lstlisting.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Time-varying LQR gains}{6}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Outputs}{7}{subsection.4.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Example optimal swing-up to the upright goal $x_g = [\pi ,0,0,0]$ for the low control-weight configuration $R = 0.01\,I_2$. Plots are emitted by \texttt  {save\_plots}.}}{7}{figure.caption.6}\protected@file@percent }
+\newlabel{fig:traj}{{2}{7}{Example optimal swing-up to the upright goal $x_g = [\pi ,0,0,0]$ for the low control-weight configuration $R = 0.01\,I_2$. Plots are emitted by \code {save\_plots}}{figure.caption.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Stage 2 --- Expert Dataset Generation (\texttt  {generate\_tvlqr\_dataset\_kux.py})}{8}{section.5}\protected@file@percent }
+\newlabel{sec:dataset}{{5}{8}{Stage 2 --- Expert Dataset Generation (\file {generate\_tvlqr\_dataset\_kux.py})}{section.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Reference discovery and the hold gain}{8}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Two integration rates}{8}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}DAgger-style noise, mirroring, and hold rollouts}{8}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Output format}{8}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Stage 3 --- The Diffusion Policy Model (\texttt  {diffusion\_policy.py})}{10}{section.6}\protected@file@percent }
+\newlabel{sec:model}{{6}{10}{Stage 3 --- The Diffusion Policy Model (\file {diffusion\_policy.py})}{section.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Forward process and the scheduler}{10}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Noise-prediction backbones}{10}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}The \texttt  {DiffusionPolicy} class}{10}{subsection.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Why EMA for control.}{10}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Stage 4 --- Training the Policy (\texttt  {train\_diffusion\_policy.py})}{11}{section.7}\protected@file@percent }
+\newlabel{sec:train}{{7}{11}{Stage 4 --- Training the Policy (\file {train\_diffusion\_policy.py})}{section.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Feature engineering and conditioning}{11}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Architecture selection and checkpointing}{11}{subsection.7.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Default training hyperparameters (\texttt  {train\_diffusion\_policy.py}).}}{11}{table.caption.8}\protected@file@percent }
+\newlabel{tab:hyper}{{3}{11}{Default training hyperparameters (\file {train\_diffusion\_policy.py})}{table.caption.8}{}}
+\@writefile{toc}{\contentsline {paragraph}{Note on synthetic holds.}{11}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}Deviations from Vanilla Diffusion: The Implemented Tricks}{12}{section.8}\protected@file@percent }
+\newlabel{sec:tricks}{{8}{12}{Deviations from Vanilla Diffusion: The Implemented Tricks}{section.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Vanilla DDPM vs.\ the control-oriented diffusion policy implemented here.}}{12}{table.caption.10}\protected@file@percent }
+\newlabel{tab:tricks}{{4}{12}{Vanilla DDPM vs.\ the control-oriented diffusion policy implemented here}{table.caption.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}Reformulation: what is actually diffused}{12}{subsection.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}Representation tricks that make the Gaussian prior appropriate}{12}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}Training-loop tricks}{12}{subsection.8.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.4}Inference / sampling tricks}{13}{subsection.8.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.5}Backbone tricks}{13}{subsection.8.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}Interfaces and Data Contracts}{14}{section.9}\protected@file@percent }
+\newlabel{sec:interfaces}{{9}{14}{Interfaces and Data Contracts}{section.9}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {10}Known Limitations}{15}{section.10}\protected@file@percent }
+\newlabel{sec:limits}{{10}{15}{Known Limitations}{section.10}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {11}Conclusion}{16}{section.11}\protected@file@percent }
+\newlabel{sec:conclusion}{{11}{16}{Conclusion}{section.11}{}}
+\gdef \@abspage@last{16}

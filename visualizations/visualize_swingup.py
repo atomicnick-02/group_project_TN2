@@ -138,7 +138,7 @@ class DiffusionController:
     first `n_exec` actions before re-planning.
     """
 
-    def __init__(self, ckpt_path, stats_path, n_exec=2):
+    def __init__(self, ckpt_path, stats_path, n_exec=2, ddim_steps=0, use_compile=True):
         import torch
         from diffusion_models.diffusion_policy import (
             Scheduler, MLP, TrajectoryTransformer, DiffusionPolicy,
@@ -159,6 +159,12 @@ class DiffusionController:
         self.horizon  = cfg["horizon"]
         self.use_goal = cfg["use_goal"]
         self.n_exec   = n_exec
+        # ddim_steps>0 switches to fast DDIM sampling, BUT for this model that
+        # converges to a different (worse-for-control) solution than the
+        # deterministic-DDPM sampler and roughly halves the swing-up success
+        # rate -- so it is OFF by default. The real speedup is torch.compile
+        # below, which keeps the DDPM sampler's output bit-identical (~5x faster).
+        self.ddim_steps = ddim_steps
 
         # Rebuild the EXACT architecture the checkpoint was trained with.
         # The checkpoint stores arch + the kwargs the network was built from,
@@ -178,6 +184,24 @@ class DiffusionController:
                                       cfg["action_dim"])
         self.policy.model.load_state_dict(ckpt["model_state"])
         self.policy.model.eval()
+
+        # The dominant inference cost is the 99-step reverse loop calling the net
+        # once per step at batch=1, which is kernel-launch bound. torch.compile
+        # with CUDA graphs ("reduce-overhead") removes that overhead for a ~5x
+        # speedup with BIT-IDENTICAL output (verified maxΔ=0). CUDA-only; falls
+        # back to eager if compile/Triton is unavailable. We warm it up here so
+        # the one-time compile+graph-capture cost is paid at construction rather
+        # than stalling the first control step.
+        if use_compile and device == "cuda":
+            try:
+                self.policy.model = torch.compile(self.policy.model,
+                                                  mode="reduce-overhead")
+                warm = torch.zeros((1, cfg["cond_dim"]), device=device)
+                for _ in range(3):
+                    self.policy.sample(warm, stochastic=False)
+                print("[diffusion] torch.compile (reduce-overhead) enabled")
+            except Exception as e:
+                print(f"[diffusion] torch.compile unavailable, using eager: {e}")
 
         self.use_angular_features = self.stats.get("use_angular_features", False)
         if self.use_angular_features:
@@ -224,14 +248,19 @@ class DiffusionController:
                 cond = np.concatenate([cond, goal_n])
             cond_t = self.torch.from_numpy(cond[None].astype(np.float32))
             with self.torch.no_grad():
-                a_seq = self.policy.sample(cond_t, stochastic=False).cpu().numpy()[0]   # (H, nu) normalized
+                if self.ddim_steps and self.ddim_steps > 0:
+                    a_seq = self.policy.sample_ddim(
+                        cond_t, num_inference_steps=self.ddim_steps).cpu().numpy()[0]
+                else:
+                    a_seq = self.policy.sample(cond_t, stochastic=False).cpu().numpy()[0]   # (H, nu) normalized
             a_seq = self._denorm_a(a_seq)
             self._queue = list(a_seq[: self.n_exec])
 
         return self._queue.pop(0)
 
 def evaluate(hold_steps=40, angle_tol=0.20, vel_tol=1.0,
-             max_steps=1200, dt_control=0.05, realtime=True, ckpt="diffusion_policy.pt"):
+             max_steps=1200, dt_control=0.05, realtime=True, ckpt="diffusion_policy.pt",
+             hybrid=True):
     controller_name = "diffusion"
     env = DoublePendulumEnv(render_mode=None, frame_skip=1)
     obs, _ = env.reset()
@@ -244,12 +273,23 @@ def evaluate(hold_steps=40, angle_tol=0.20, vel_tol=1.0,
     mujoco.mj_forward(env.model, env.data)
     obs = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
 
-    # Build the diffusion-policy controller.
-    ctrl = DiffusionController(
+    # Build the diffusion-policy controller. With hybrid=True it is wrapped in an
+    # LQR catch that takes over once the swing-up arrives near the top and holds
+    # the (20-Hz-unstabilizable) inverted equilibrium by re-closing the loop at
+    # the integration rate -- so the pendulum stands still instead of limit-
+    # cycling around upright.
+    diff = DiffusionController(
         results_dir / ckpt,
         results_dir / "norm_stats.json",
         n_exec=1,
     )
+    if hybrid:
+        from hybrid_controller import HybridController
+        ctrl = HybridController(diff, dt_sim=env.model.opt.timestep,
+                                goal=np.array([np.pi, 0.0, 0.0, 0.0]))
+        print("[hybrid] diffusion swing-up + LQR catch handoff enabled")
+    else:
+        ctrl = diff
     ctrl.reset(x0)
 
     dt_sim   = env.model.opt.timestep
@@ -307,20 +347,27 @@ def evaluate(hold_steps=40, angle_tol=0.20, vel_tol=1.0,
                 consecutive_hold = 0
 
             # 5. Apply the control action to the actuator
+            substep = getattr(ctrl, "substep_action", None)
             env.data.ctrl[:] = u
-            
+
             # 6. Step the physics engine forward
             for _ in range(n_sub):
                 # Clear all applied forces at the start of the substep
                 env.data.xfrc_applied[:] = 0.0
-                
+
                 # Apply the keyboard force
                 env.data.xfrc_applied[key_handler.tip_id, :3] = key_handler.force
-                
+
                 # Apply the mouse perturbation (if active)
                 if viewer.perturb.select > 0:
                     mujoco.mjv_applyPerturbForce(env.model, env.data, viewer.perturb)
-                
+
+                # Re-close the LQR catch at the integration rate (hybrid only) so
+                # the inverted hold is regulated faster than the 20 Hz control rate.
+                if substep is not None:
+                    x_sub = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
+                    env.data.ctrl[:] = np.clip(substep(x_sub), -max_tau, max_tau)
+
                 # Advance simulation by one timestep
                 mujoco.mj_step(env.model, env.data)
             
@@ -393,6 +440,9 @@ if __name__ == "__main__":
     p.add_argument("--max-steps", type=int, default=1200)
     p.add_argument("--no-realtime", action="store_true",
                    help="run as fast as possible instead of wall-clock paced")
+    p.add_argument("--no-hybrid", action="store_true",
+                   help="disable the LQR catch handoff (pure diffusion policy, "
+                        "which limit-cycles around the top instead of holding)")
     args = p.parse_args()
 
     evaluate(
@@ -402,4 +452,5 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         realtime=not args.no_realtime,
         ckpt=args.ckpt,
+        hybrid=not args.no_hybrid,
     )

@@ -66,6 +66,11 @@ from concurrent.futures import ProcessPoolExecutor
 warnings.filterwarnings("ignore")
 os.environ.setdefault("ABSL_LOG_LEVEL", "3")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+# JAX here only does tiny float64 control math (LQR linearization/Riccati, dynamics
+# matrices) — the GPU is slower for that and, with multiple workers, just wastes the
+# 4 GB the torch diffusion policy needs. Pin JAX to CPU (also silences the
+# "CUDA-enabled jaxlib not installed" fallback warning). Override with JAX_PLATFORMS=cuda.
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
 
 # Make both the repo root (for diffusion_models) and this dir importable.
 # This MUST run before the local `simulation` / `visualize_swingup` imports.
@@ -83,7 +88,8 @@ from tqdm import tqdm
 from double_pendulum_environment import DoublePendulumEnv
 # Reuse the EXACT controllers used by the interactive viewer so the headless
 # numbers correspond to what you watch on screen.
-from visualizations.visualize_swingup import DiffusionController, TVLQRController, wrap_to_pi
+from visualizations.visualize_swingup import DiffusionController, wrap_to_pi
+from hybrid_controller import HybridController
 
 results_dir = _HERE / "results"
 OUT_DIR = _HERE / "graphs" / "evaluation" / "benchmark"
@@ -93,22 +99,22 @@ GOAL = np.array([np.pi, 0.0, 0.0, 0.0])          # upright
 
 
 # ── controller construction ──────────────────────────────────────────────────
-def make_controller(name, ckpt, n_exec):
-    if name == "tvlqr":
-        c = TVLQRController()
-        c.reset()
-        return c
+def make_controller(name, ckpt, n_exec, dt_sim=0.002, ddim_steps=0, use_compile=True):
     c = DiffusionController(results_dir / ckpt,
                             results_dir / "norm_stats.json",
-                            n_exec=n_exec)
+                            n_exec=n_exec, ddim_steps=ddim_steps,
+                            use_compile=use_compile)
+    if name == "hybrid":
+        # Wrap the policy with an LQR catch re-closed at the integration rate so
+        # the swing-up is handed off to a controller that can actually hold the
+        # (20-Hz-unstabilizable) inverted equilibrium.
+        return HybridController(c, dt_sim=dt_sim, goal=GOAL)
     return c
 
 
 def reset_controller(ctrl, name, x0):
-    if name == "diffusion":
-        ctrl.reset(x0)
-    else:
-        ctrl.reset()
+    ctrl.reset(x0)
+    
 
 
 # ── disturbance schedule ──────────────────────────────────────────────────────
@@ -225,11 +231,20 @@ def run_rollout(env, ctrl, ctrl_name, x0, *, max_steps, dt_control, hold_steps,
             if disturb["step"] <= step < disturb["step"] + disturb["dur"]:
                 push_force = disturb["force"]
 
+        # Controllers that expose substep_action (the hybrid catch) re-close their
+        # loop at the integration rate dt_sim -- the inverted hold is not
+        # stabilizable at the 20 Hz control rate, so the LQR torque is recomputed
+        # from the live plant state every sub-step. Plain controllers (diffusion)
+        # have no substep_action, so the action is held (ZOH) as before.
+        substep = getattr(ctrl, "substep_action", None)
         env.data.ctrl[:] = u
         for _ in range(n_sub):
             env.data.xfrc_applied[:] = 0.0
             if push_force is not None:
                 env.data.xfrc_applied[tip_id, :3] = push_force
+            if substep is not None:
+                x_sub = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
+                env.data.ctrl[:] = np.clip(substep(x_sub), -max_tau, max_tau)
             mujoco.mj_step(env.model, env.data)
         env.data.xfrc_applied[:] = 0.0
 
@@ -358,7 +373,7 @@ def summary_to_rows(summary, controllers, conditions):
 # ── plotting ──────────────────────────────────────────────────────────────────
 def plot_results(summary, examples, controllers, base_conditions, noise_levels):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    colors = {"diffusion": "tab:blue", "tvlqr": "tab:orange"}
+    colors = {"diffusion": "tab:blue", "tvlqr": "tab:orange", "hybrid": "tab:green"}
 
     # 1. success rate by (base) condition
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -490,7 +505,11 @@ def _get_env():
 
 def _get_ctrl(name):
     if name not in _CTRL_CACHE:
-        _CTRL_CACHE[name] = make_controller(name, _CFG["ckpt"], _CFG["n_exec"])
+        env = _get_env()
+        _CTRL_CACHE[name] = make_controller(name, _CFG["ckpt"], _CFG["n_exec"],
+                                            dt_sim=env.model.opt.timestep,
+                                            ddim_steps=_CFG.get("ddim_steps", 0),
+                                            use_compile=_CFG.get("use_compile", True))
     return _CTRL_CACHE[name]
 
 
@@ -543,8 +562,9 @@ def _progress_str(n, total, row):
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--controller", choices=["diffusion", "tvlqr", "both"],
-                   default="diffusion")
+    p.add_argument("--controller", choices=["diffusion", "tvlqr", "hybrid", "both"],
+                   default="diffusion",
+                   help="'hybrid' = diffusion swing-up + LQR catch handoff")
     p.add_argument("--ckpt", default="diffusion_policy.pt",
                    help="checkpoint filename inside results/ (diffusion)")
     p.add_argument("--n-rollouts", type=int, default=100,
@@ -557,6 +577,14 @@ def main():
     p.add_argument("--n-exec", type=int, default=3,
                    help="diffusion: actions executed per re-plan (cost vs accuracy; "
                         "2 holds the top at ~2x speed, 1 is most faithful, >=3 falls)")
+    p.add_argument("--ddim-steps", type=int, default=0,
+                   help="diffusion: DDIM denoising steps per re-plan (0 = full "
+                        "DDPM loop, the default; >0 is faster but for this model "
+                        "lands on a worse-for-control solution -- see --no-compile "
+                        "for the lossless speedup instead)")
+    p.add_argument("--no-compile", action="store_true",
+                   help="disable torch.compile on the diffusion net (compile gives "
+                        "a ~5x lossless inference speedup on CUDA; on by default)")
     p.add_argument("--push-force", type=float, default=1.0,
                    help="nominal tip-push force magnitude (N)")
     p.add_argument("--jump-vel", type=float, default=4.0,
@@ -575,7 +603,7 @@ def main():
     p.add_argument("--conditions", nargs="*",
                    default=["clean", "push", "random_init", "state_jump"],
                    help="disturbance conditions to run (besides the noise sweep)")
-    p.add_argument("--workers", type=int, default=4,
+    p.add_argument("--workers", type=int, default=2,
                    help="parallel worker PROCESSES (each = its own env+policy). "
                         "1 = sequential. Try your physical core count.")
     p.add_argument("--torch-threads", type=int, default=None,
@@ -603,7 +631,8 @@ def main():
                   "vel": [0, 0, 1, 1]}[args.noise_dims]
 
     # config every worker needs (besides the per-job fields)
-    cfg = {"ckpt": args.ckpt, "n_exec": args.n_exec, "max_steps": args.max_steps,
+    cfg = {"ckpt": args.ckpt, "n_exec": args.n_exec, "ddim_steps": args.ddim_steps,
+           "use_compile": not args.no_compile, "max_steps": args.max_steps,
            "dt_control": args.dt_control, "hold_steps": args.hold_steps,
            "angle_tol": args.angle_tol, "vel_tol": args.vel_tol,
            "push_force": args.push_force, "jump_vel": args.jump_vel,
