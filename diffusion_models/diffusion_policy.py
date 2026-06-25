@@ -152,9 +152,17 @@ class TrajectoryTransformer(nn.Module):
 
 # ── Noise scheduler ──────────────────────────────────────────────────────────────
 class Scheduler:
-    """Linear beta schedule with a forward-diffusion helper."""
+    """Linear beta schedule with a forward-diffusion helper.
 
-    def __init__(self, num_steps: int, device, start_beta: float = 0.0003, end_beta: float = 0.03):
+    end_beta is sized so the schedule actually reaches ~N(0,I) at the top
+    timestep: with num_steps=100, end_beta=0.1 gives terminal alpha_bar ~= 0.006
+    (terminal SNR ~= 0.006), vs. ~0.22 for the old 0.03. Sampling starts from
+    pure Gaussian noise, so a near-zero terminal SNR is required for the
+    inference prior to match the forward marginal q(x_T|x_0) (Lin et al. 2023);
+    the old value left ~46% of the action signal intact at x_T.
+    """
+
+    def __init__(self, num_steps: int, device, start_beta: float = 0.0003, end_beta: float = 0.1):
         self.num_steps  = num_steps
         self.device     = device
         self.beta_array = torch.linspace(start_beta, end_beta, num_steps).to(device)
@@ -220,8 +228,12 @@ class DiffusionPolicy:
         for be, b in zip(self.ema_model.buffers(), self.model.buffers()):
             be.copy_(b)
 
-    def train(self, dataloader, epochs: int):
-        """dataloader yields (cond, action_seq) batches."""
+    def train(self, dataloader, epochs: int, on_epoch_end=None):
+        """dataloader yields (cond, action_seq) batches.
+
+        on_epoch_end: optional callback(epoch, avg_loss) invoked after each
+        epoch (epoch is 1-based) -- used e.g. for periodic checkpointing.
+        """
         size = len(dataloader.dataset)
         total_steps = epochs * len(dataloader)
         self._lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -257,6 +269,9 @@ class DiffusionPolicy:
             avg_loss = sum(epoch_losses) / len(epoch_losses)
             lr_now   = self._lr_scheduler.get_last_lr()[0]
             print(f"Epoch {epoch + 1:>3d}/{epochs}  avg_loss={avg_loss:.5f}  lr={lr_now:.2e}")
+
+            if on_epoch_end is not None:
+                on_epoch_end(epoch + 1, avg_loss)
 
     @torch.no_grad()
     def sample(self, cond: torch.Tensor, stochastic: bool = True):

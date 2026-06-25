@@ -1,8 +1,8 @@
 {
   "controller": "diffusion",
-  "success": true,
-  "success_step": 75,
-  "time_to_success_s": 3.75,
+  "success": false,
+  "success_step": null,
+  "time_to_success_s": null,
   "hold_steps_required": 40,
-  "total_steps": 203
+  "total_steps": 122
 }

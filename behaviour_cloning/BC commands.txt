@@ -1,0 +1,27 @@
+-Utility functions:
+def denorm_action(a, action_range, action_min): 
+	return (a + 1.0) * 0.5 * action_range + action_min
+
+def feat_transform(x, vel_min, vel_range):
+	q1 = x[0]
+	q2 = x[1]
+	v_norm  = 2.0 * (x[2:] - vel_min) / vel_range - 1.0
+	feat = np.row_stack([np.sin(q1), np.cos(q1), np.sin(q2), np.cos(q2), v_norm[0], v_norm[1]]) 
+	return feat
+
+-Load parameters for BC:
+with open('C:/Users/theod/Downloads/group_project_TN2-pendulum/group_project_TN2-pendulum/double_pendulum/results_bc/norm_stats.json', 'r') as file:
+		data = json.load(file)
+action_min = np.array(data['action_min'])
+action_range = np.array(data['action_max']) - np.array(data['action_min'])
+vel_min = np.array(data['vel_min'])
+vel_range = np.array(data['vel_max']) - np.array(data['vel_min'])
+H = 8
+model = BCPolicyModel(H)
+	model.load_state_dict(torch.load("C:/Users/theod/Downloads/group_project_TN2-pendulum/group_project_TN2-pendulum/double_pendulum/results_bc/bc_policy_3.pt",map_location=lambda storage, loc: storage))
+model.eval()
+
+-Inside training loop:
+state = torch.from_numpy(state.T).float()  # add batch dimension
+action_norm = model(state).squeeze(0).detach().numpy()  # remove batch dimension
+action = denorm_action(action_norm[0,:], action_range, action_min)

@@ -1,0 +1,92 @@
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+
+% ── Code listing style ────────────────────────────────────────────────────────
+\definecolor{codebg}{rgb}{0.97,0.97,0.97}
+\definecolor{codekw}{rgb}{0.10,0.10,0.55}
+\definecolor{codecom}{rgb}{0.30,0.50,0.30}
+\definecolor{codestr}{rgb}{0.60,0.20,0.10}
+\lstdefinestyle{py}{
+  language=Python,
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{codekw}\bfseries,
+  commentstyle=\color{codecom}\itshape,
+  stringstyle=\color{codestr},
+  numbers=left, numberstyle=\tiny\color{gray}, numbersep=6pt,
+  frame=single, rulecolor=\color{gray!40},
+  breaklines=true, showstringspaces=false,
+  tabsize=2, columns=fullflexible, keepspaces=true,
+}
+\lstset{style=py}
+
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\code}[1]{\texttt{#1}}
+% Wrapping filename for narrow table cells (footnotesize typewriter).
+\newcommand{\fn}[1]{{\footnotesize\ttfamily #1}}
+% Ragged-right paragraph column.
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{\textbf{From Optimal Control to Diffusion Policy}\\[2pt]
+\large A Trajectory-Optimization $\rightarrow$ TVLQR $\rightarrow$
+Behavioural-Cloning Pipeline for Double-Pendulum Swing-Up}
+\author{Group Project TN2 --- Technical Documentation}
+\date{\today}
+
+\begin{document}
+\maketitle
+\clearpage
+
+\tableofcontents
+\bigskip
+\hrule
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+The goal of this project is to compare the performance of 2 different learning-
+based control methods. The first method is a behavioural cloning approach, 
+where we use a dataset of expert demonstrations to train a policy 
+that mimics the expert's actions. The second method is a diffusion policy approach,
+where we use a diffusion model to learn a policy that can generate actions based on
+the current state of the system. We will evaluate the performance of both methods
+in the \textbf{double pendulum swingup task} and the \textbf{stacking problem}.
+
+\subsection{Behavioural Cloning}
+
+\subsection{Diffusion}
+In order to understand the diffusion policy approach, we first need to understand
+the concept of diffusion models. Diffusion models are a class of generative models
+that learn to generate structured data (in our case, action sequences) 
+by iteratively denoising a sample of noise.
+
+\subsection*{Parameter Setup}
+For the diffusion model, we first need to define the time parameters of the 
+noising and denoising process.
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Time Horizon} $T$ is the number of time steps in the diffusion process.
+  \item \textbf{$\beta$ Schedule} $\beta_t$ is a set of hyperparameters that control
+  how quickly the noise is added to the data during the forward diffusion process.
+  It is a monotonic increasing sequence of values that determine the variance of the noise
+  \item \textbf{Noise Schedule} $\alpha_t$ = $1 - \beta_t$ is a set of hyperparameters 
+  that control how quickly the noise is removed.
+  \item \textbf{Cumulative Noise Schedule} $\bar{\alpha}_t$ = $\prod_{s=1}^{t} \alpha_s$ 
+  \item 
+\end{itemize}
+
+
+\end{document}

@@ -5,10 +5,13 @@ Starts the pendulum hanging at the bottom [0,0,0,0] and tries to swing it up to
 upright [pi,0,0,0], holding there. Two controllers are selectable:
 
     --controller diffusion   # the trained Diffusion Policy checkpoint
-    --controller tvlqr        # the TVLQR trajectory-tracking baseline
+    --controller bc           # the behavioral-cloning MLP baseline
 
 The diffusion controller rebuilds whatever architecture the checkpoint was
-trained with (MLP or Transformer) automatically -- no manual edits needed.
+trained with (MLP or Transformer) automatically -- no manual edits needed. The
+bc controller loads behaviour_cloning/bc_policy_*.pt (a raw state_dict) with its
+own norm_stats.json, so both can be benchmarked head-to-head under the identical
+environment, start state and success criteria.
 
 INTERACTION (native MuJoCo viewer):
     * Double-click a body (a pendulum link) to select it.
@@ -19,10 +22,11 @@ INTERACTION (native MuJoCo viewer):
 
 Run from the repo root (so diffusion_models is importable):
     python double_pendulum/evaluate_swingup.py --controller diffusion
-    python double_pendulum/evaluate_swingup.py --controller tvlqr
+    python double_pendulum/evaluate_swingup.py --controller bc
 """
 
 import os
+import sys
 import time
 import json
 import argparse
@@ -35,6 +39,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+# Make the repo root importable so `diffusion_models` resolves regardless of CWD.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from simulation import DoublePendulumEnv
 
 current_dir = Path(__file__).resolve().parent
@@ -44,64 +53,6 @@ results_dir = current_dir / "results"
 # ── Helpers ─────────────────────────────────────────────────────────────────
 def wrap_to_pi(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
-
-
-# ── TVLQR controller (adapted from the reference script) ─────────────────────
-class TVLQRController:
-    """Trajectory-tracking baseline with deviation-triggered recovery."""
-
-    DEVIATION_THRESHOLD = 2.0
-
-    def __init__(self):
-        self.x_ref = np.loadtxt(results_dir / "trajectory.csv", delimiter=",", skiprows=1).T
-        self.u_ref = np.loadtxt(results_dir / "inputs.csv", delimiter=",", skiprows=1).T
-        self.K     = np.load(results_dir / "K_matrix.npy")
-        self.max_idx     = self.x_ref.shape[1] - 1
-        self.current_idx = 0
-
-    @staticmethod
-    def _feat(x, v_scale=0.1):
-        if x.ndim == 1:
-            p0, p1 = x[0], x[1]
-            v = x[2:] * v_scale
-            return np.concatenate(([np.cos(p0), np.sin(p0), np.cos(p1), np.sin(p1)], v))
-        p0, p1 = x[0, :], x[1, :]
-        v = x[2:, :] * v_scale
-        return np.vstack((np.cos(p0), np.sin(p0), np.cos(p1), np.sin(p1), v))
-
-    def _ranked(self, x, ref, k=1):
-        diff  = self._feat(ref) - self._feat(x).reshape(-1, 1)
-        dists = np.linalg.norm(diff, axis=0)
-        order = np.argsort(dists)
-        return order[:k], dists[order[:k]]
-
-    def _K_weighted(self, x, k=5):
-        idx, dists = self._ranked(x, self.x_ref, k=k)
-        w = 1.0 / (dists + 1e-6)
-        w = w / w.sum()
-        Ks = self.K[np.clip(idx, 0, len(self.K) - 1)]
-        return np.sum(w[:, None, None] * Ks, axis=0)
-
-    def reset(self):
-        self.current_idx = 0
-
-    def action(self, x):
-        target = self.x_ref[:, self.current_idx].reshape(4, 1)
-        _, d = self._ranked(x, target, k=1)
-        holding = self.current_idx >= self.max_idx
-        if d[0] > self.DEVIATION_THRESHOLD or holding:
-            best, _ = self._ranked(x, self.x_ref, k=1)
-            idx = best[0]
-            K = self._K_weighted(x, k=5)
-        else:
-            idx = self.current_idx
-            K = self.K[idx]
-            self.current_idx += 1
-
-        x_des, u_des = self.x_ref[:, idx], self.u_ref[:, idx]
-        err = x - x_des
-        err[0], err[1] = wrap_to_pi(err[0]), wrap_to_pi(err[1])
-        return u_des - K @ err
 
 
 # ── Diffusion-policy controller ──────────────────────────────────────────────
@@ -205,9 +156,99 @@ class DiffusionController:
         return self._queue.pop(0)
 
 
+# ── Behavioral-cloning controller (plain MLP baseline) ───────────────────────
+class BCController:
+    """
+    Direct behavioral-cloning baseline (NOT a diffusion model).
+
+    A single feed-forward MLP maps the current state's angular features
+    [sin q1, cos q1, sin q2, cos q2, dq1_n, dq2_n] -> an H-step action chunk
+    (normalized to [-1, 1]). We execute the first predicted action and re-plan
+    every control step, mirroring behaviour_cloning/behavioral_cloning.py.
+
+    Two things make this checkpoint incompatible with DiffusionController, so it
+    gets its own loader:
+      * the .pt is a RAW state_dict (no {"config", "model_state"} wrapper), so
+        the architecture is rebuilt here to match BCPolicyModel exactly;
+      * BC was trained on its own dataset, so it uses ITS OWN norm_stats.json
+        (different velocity ranges and a +/-0.07 torque scale vs diffusion's
+        +/-0.10) for both feature-norm and action-denorm.
+    """
+
+    def __init__(self, ckpt_path, stats_path):
+        import torch
+        import torch.nn as nn
+        self.torch = torch
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device
+
+        with open(stats_path) as fp:
+            self.stats = json.load(fp)
+        self.horizon = int(self.stats["horizon"])
+        self.nu      = int(self.stats.get("nu", 2))
+
+        # angular-feature velocity normalization + action denormalization
+        self.vel_min = np.array(self.stats["vel_min"], dtype=np.float32)
+        self.vel_max = np.array(self.stats["vel_max"], dtype=np.float32)
+        self.v_rng   = np.where((self.vel_max - self.vel_min) > 1e-8,
+                                self.vel_max - self.vel_min, 1.0)
+        self.a_min = np.array(self.stats["action_min"], dtype=np.float32)
+        self.a_max = np.array(self.stats["action_max"], dtype=np.float32)
+        self.a_rng = np.where((self.a_max - self.a_min) > 1e-8, self.a_max - self.a_min, 1.0)
+
+        # Mirror of behaviour_cloning/behavioral_cloning.py:BCPolicyModel. The
+        # checkpoint is a bare state_dict, so this layer stack must match 1:1
+        # (Linear 6->512->256->256->128->2*H, Tanh between, final Tanh).
+        class BCPolicyModel(nn.Module):
+            def __init__(self, horizon, action_dim):
+                super().__init__()
+                self.horizon, self.action_dim = horizon, action_dim
+                self.layers = nn.Sequential(
+                    nn.Linear(6, 512),   nn.Tanh(), nn.Dropout(0.2),
+                    nn.Linear(512, 256), nn.Tanh(), nn.Dropout(0.2),
+                    nn.Linear(256, 256), nn.Tanh(), nn.Dropout(0.2),
+                    nn.Linear(256, 128), nn.Tanh(), nn.Dropout(0.2),
+                    nn.Linear(128, action_dim * horizon), nn.Tanh(),
+                )
+
+            def forward(self, x):
+                return self.layers(x).view(-1, self.horizon, self.action_dim)
+
+        self.model = BCPolicyModel(self.horizon, self.nu).to(device)
+        state = torch.load(ckpt_path, map_location=device)
+        if isinstance(state, dict) and "model_state" in state:   # tolerate wrapped ckpts
+            state = state["model_state"]
+        self.model.load_state_dict(state)
+        self.model.eval()
+        print(f"[bc] loaded BCPolicyModel(horizon={self.horizon}) from {Path(ckpt_path).name}")
+
+    def _feat(self, x):
+        q1, q2 = x[0], x[1]
+        v = 2.0 * (x[2:] - self.vel_min) / self.v_rng - 1.0
+        return np.array([np.sin(q1), np.cos(q1), np.sin(q2), np.cos(q2), v[0], v[1]],
+                        dtype=np.float32)
+
+    def _denorm_a(self, a):
+        return (a + 1.0) * 0.5 * self.a_rng + self.a_min
+
+    def reset(self, x0=None):
+        # stateless: the MLP re-plans from the current observation every step
+        pass
+
+    def action(self, x):
+        f  = self._feat(np.asarray(x, dtype=np.float32))
+        ft = self.torch.from_numpy(f[None])                       # (1, 6)
+        with self.torch.no_grad():
+            a_seq = self.model(ft).cpu().numpy()[0]               # (H, nu) normalized
+        return self._denorm_a(a_seq[0])
+
+
 # ── Evaluation loop ──────────────────────────────────────────────────────────
-def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
-             max_steps=1200, dt_control=0.05, realtime=True, ckpt="diffusion_policy.pt"):
+def evaluate(hold_steps=40, angle_tol=0.20, vel_tol=1.0,
+             max_steps=1200, dt_control=0.05, realtime=True, ckpt="diffusion_policy.pt",
+             controller_name="diffusion", bc_ckpt="bc_policy_3.pt",
+             bc_stats="norm_stats.json"):
     env = DoublePendulumEnv(render_mode=None, frame_skip=1)
     obs, _ = env.reset()
 
@@ -218,9 +259,11 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
     mujoco.mj_forward(env.model, env.data)
     obs = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
 
-    # Build the chosen controller.
-    if controller_name == "tvlqr":
-        ctrl = TVLQRController(); ctrl.reset()
+    # Build the chosen controller. Both run in the identical env / start state /
+    # success criteria below, so their summaries are directly comparable.
+    if controller_name == "bc":
+        bc_dir = _REPO_ROOT / "behaviour_cloning"
+        ctrl = BCController(bc_dir / bc_ckpt, bc_dir / bc_stats)
     else:
         ctrl = DiffusionController(
             results_dir / ckpt,
@@ -228,7 +271,7 @@ def evaluate(controller_name, hold_steps=40, angle_tol=0.20, vel_tol=1.0,
             n_exec=1,   # re-plan every step: the unstable upright hold needs tight
                         # feedback (n_exec=2 lets the error grow ~2x between plans)
         )
-        ctrl.reset(x0)
+    ctrl.reset(x0)
 
     dt_sim   = env.model.opt.timestep
     n_sub    = max(1, int(round(dt_control / dt_sim)))
@@ -341,9 +384,8 @@ def _finish(name, hist, success_step, hold_steps):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--controller", choices=["diffusion", "tvlqr"], default="diffusion")
     p.add_argument("--ckpt", default="diffusion_policy.pt",
-                   help="checkpoint filename inside results/ (diffusion only)")
+                   help="checkpoint filename inside results/")
     p.add_argument("--hold-steps", type=int, default=40,
                    help="consecutive in-tolerance control steps to count as success")
     p.add_argument("--angle-tol", type=float, default=0.20)
@@ -354,7 +396,6 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     evaluate(
-        controller_name=args.controller,
         hold_steps=args.hold_steps,
         angle_tol=args.angle_tol,
         vel_tol=args.vel_tol,

@@ -1,4 +1,10 @@
 import os
+
+# This collocation NLP is tiny float64 control math; keep JAX on CPU so GPU
+# dispatch overhead (and the consumer-GPU cuDNN init) doesn't get in the way.
+# Must be set before `import jax`. Mirrors generate_dataset.py.
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
 import numpy as np
 import matplotlib.pyplot as plt
 import jax
