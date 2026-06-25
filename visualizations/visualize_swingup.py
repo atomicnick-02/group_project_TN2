@@ -23,6 +23,12 @@ Run from the repo root (so diffusion_models is importable):
 """
 
 import os
+# Pin JAX to CPU before anything imports it. The GPU (4 GB) is reserved for the
+# torch diffusion policy; JAX here is only tiny float64 LQR/Riccati math. If JAX
+# grabs the GPU too, torch's torch.compile allocation OOMs cublas
+# ("No BLAS support in stream"). Override with JAX_PLATFORMS=cuda. See
+# benchmark_swingup.py, which does the same.
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
 import sys
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO_ROOT)                                   # for `diffusion_models`
@@ -48,6 +54,16 @@ from double_pendulum_environment import DoublePendulumEnv
 
 current_dir = Path(__file__).resolve().parent
 results_dir = current_dir.parent / "double_pendulum" / "results"
+
+# ── Goal ─────────────────────────────────────────────────────────────────────
+# Single source of truth for the swing-up target [q1, q2, q1_dot, q2_dot].
+# Change this ONE line to retarget the whole visualization: the LQR catch, the
+# success check, the goal-conditioning input, and the reference lines in the
+# plots all read from here.
+# NOTE: the diffusion policy was trained on a single constant goal and ignores
+# its goal input (see memory), so only the LQR catch + success/plot logic
+# actually track changes made here.
+GOAL = np.array([np.pi, 0.0 , 0.0, 0.0])
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -244,7 +260,7 @@ class DiffusionController:
         if not self._queue:
             cond = self._hist.reshape(-1)
             if self.use_goal:
-                goal_n = self._norm_s(np.array([np.pi, 0, 0, 0], dtype=np.float32))
+                goal_n = self._norm_s(GOAL.astype(np.float32))
                 cond = np.concatenate([cond, goal_n])
             cond_t = self.torch.from_numpy(cond[None].astype(np.float32))
             with self.torch.no_grad():
@@ -286,7 +302,7 @@ def evaluate(hold_steps=40, angle_tol=0.20, vel_tol=1.0,
     if hybrid:
         from hybrid_controller import HybridController
         ctrl = HybridController(diff, dt_sim=env.model.opt.timestep,
-                                goal=np.array([np.pi, 0.0, 0.0, 0.0]))
+                                goal=GOAL.copy())
         print("[hybrid] diffusion swing-up + LQR catch handoff enabled")
     else:
         ctrl = diff
@@ -295,7 +311,7 @@ def evaluate(hold_steps=40, angle_tol=0.20, vel_tol=1.0,
     dt_sim   = env.model.opt.timestep
     n_sub    = max(1, int(round(dt_control / dt_sim)))
     max_tau  = env.action_space.high[0]
-    x_goal   = np.array([np.pi, 0.0, 0.0, 0.0])
+    x_goal   = GOAL
 
     hist = {"t": [], "x": [], "u": []}
     consecutive_hold = 0
@@ -404,7 +420,7 @@ def _finish(name, hist, success_step, hold_steps):
 
     fig, axs = plt.subplots(2, 2, figsize=(15, 9))
     labels = ["q1 (shoulder)", "q2 (elbow)", "q1_dot", "q2_dot"]
-    goal   = [np.pi, 0.0, 0.0, 0.0]
+    goal   = GOAL
     for i, ax in enumerate(axs.ravel()):
         ax.plot(t, x[:, i], "b-", label=labels[i])
         ax.axhline(goal[i], color="r", ls="--", alpha=0.6, label="goal")

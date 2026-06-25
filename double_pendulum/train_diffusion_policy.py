@@ -46,17 +46,21 @@ STATS_PATH   = os.path.join(OUT_DIR, "norm_stats.json")
 CKPT_DIR     = os.path.join(OUT_DIR, "checkpoints")  # periodic per-epoch snapshots
 CKPT_EVERY   = 20                                    # save a checkpoint every N epochs
 
+# Dedicated folder for training-loss logs (CSV) + curves (PNG), nested per-arch so
+# mlp/transformer runs don't clobber each other (mirrors results/<arch>/).
+TRAIN_LOG_DIR = Path(__file__).resolve().parent / "graphs" / "training"
+
 NX, NU       = 4, 2          # raw state dim (from HDF5), action dim
 NX_FEAT      = 6             # feature dim: [sin(q1), cos(q1), sin(q2), cos(q2), dq1, dq2]
-K            = 6             # observation-history length
+K            = 5             # observation-history length
 H            = 10            # action prediction horizon
 USE_GOAL     = True          # append goal features to conditioning vector
 X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)  # upright
 
-TIMESTEPS    = 100
-EPOCHS       = 200
-BATCH_SIZE   = 258
-LR           = 1e-4
+TIMESTEPS    = 25
+EPOCHS       = 400
+BATCH_SIZE   = 512
+LR           = 5*1e-4
 SEED         = 42
 
 # Train/val/test split. The expert trajectories are divided 70/15/15 at the
@@ -79,9 +83,9 @@ MLP_HIDDEN   = 512
 # Transformer-specific
 TF_D_MODEL   = 192
 TF_HEADS     = 4
-TF_LAYERS    = 5
-TF_FF        = 256
-TF_DROPOUT   = 0.2
+TF_LAYERS    = 3
+TF_FF        = 512
+TF_DROPOUT   = 0.15
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -307,6 +311,43 @@ def save_checkpoint(path, policy, arch, net_kwargs, cond_dim):
     }, path)
 
 
+def find_last_checkpoint(ckpt_dir, arch):
+    """Path to the highest-epoch periodic snapshot in ckpt_dir, or None.
+
+    Periodic snapshots are named '<arch>_epoch<NNNN>.pt' (see on_epoch_end) with a
+    zero-padded epoch, so a plain lexicographic sort already orders them by epoch;
+    the last element is the most recent. Returns None if the dir is missing or has
+    no matching snapshots.
+    """
+    ckpt_dir = Path(ckpt_dir)
+    if not ckpt_dir.is_dir():
+        return None
+    snaps = sorted(ckpt_dir.glob(f"{arch}_epoch*.pt"))
+    return snaps[-1] if snaps else None
+
+
+def load_warmstart(policy, ckpt_path, cond_dim, net_kwargs):
+    """Initialize the policy weights from an existing checkpoint (warm start).
+
+    Loads the raw weights into the trainable model and the EMA weights into the
+    EMA copy, so training resumes from a smoother starting point instead of random
+    init. Refuses to load when the saved architecture/cond_dim doesn't match the
+    run about to start -- a silent shape mismatch would otherwise corrupt training.
+    """
+    ckpt = torch.load(ckpt_path, map_location=policy.device)
+    cfg  = ckpt.get("config", {})
+    saved_cond = cfg.get("cond_dim")
+    if saved_cond is not None and saved_cond != cond_dim:
+        raise ValueError(f"warmstart cond_dim mismatch: checkpoint has {saved_cond}, "
+                         f"this run needs {cond_dim}")
+    saved_kwargs = cfg.get("net_kwargs")
+    if saved_kwargs is not None and saved_kwargs != net_kwargs:
+        raise ValueError("warmstart net_kwargs mismatch:\n"
+                         f"  checkpoint: {saved_kwargs}\n  current:    {net_kwargs}")
+    policy.model.load_state_dict(ckpt["model_state_raw"])
+    policy.ema_model.load_state_dict(ckpt["model_state"])
+
+
 # ── Held-out evaluation ──────────────────────────────────────────────────────
 @torch.no_grad()
 def eval_loss(policy, loader, seed=0):
@@ -339,6 +380,69 @@ def eval_loss(policy, loader, seed=0):
     return total / max(count, 1)
 
 
+# ── Loss logging (CSV + PNG) ─────────────────────────────────────────────────
+def write_loss_logs(arch, history, final_val, final_test):
+    """Persist the loss curves the run otherwise only prints.
+
+    `history` is a list of (epoch, train_loss, val_loss). `train_loss` is the
+    per-epoch mean on the RAW model (what the optimizer sees); `val_loss` is on
+    the EMA weights (what the checkpoint deploys), as computed by eval_loss --
+    hence the labels below. Writes, under graphs/training/<arch>/:
+        csv/loss_history.csv   epoch, train_loss, val_loss
+        csv/final_losses.csv   split, loss   (final val + held-out test)
+        loss_curves.png        train vs val curve, with best-val + test marked
+    """
+    import csv
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    log_dir = TRAIN_LOG_DIR / arch
+    csv_dir = log_dir / "csv"
+    csv_dir.mkdir(parents=True, exist_ok=True)
+
+    hist_csv = csv_dir / "loss_history.csv"
+    with open(hist_csv, "w", newline="") as fp:
+        w = csv.writer(fp)
+        w.writerow(["epoch", "train_loss", "val_loss"])
+        for epoch, tr, va in history:
+            w.writerow([epoch, f"{tr:.6f}", f"{va:.6f}"])
+
+    summary_csv = csv_dir / "final_losses.csv"
+    with open(summary_csv, "w", newline="") as fp:
+        w = csv.writer(fp)
+        w.writerow(["split", "loss"])
+        w.writerow(["val",  f"{final_val:.6f}"])
+        w.writerow(["test", f"{final_test:.6f}"])
+
+    png = log_dir / "loss_curves.png"
+    if history:
+        epochs = [h[0] for h in history]
+        tr     = [h[1] for h in history]
+        va     = [h[2] for h in history]
+        best_i = int(np.argmin(va))
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(epochs, tr, label="train (raw)", lw=1.5)
+        ax.plot(epochs, va, label="validation (EMA)", lw=1.5)
+        ax.scatter([epochs[best_i]], [va[best_i]], color="C1", zorder=5,
+                   label=f"best val = {va[best_i]:.4f} @ epoch {epochs[best_i]}")
+        ax.axhline(final_test, ls="--", color="gray", lw=1,
+                   label=f"final test = {final_test:.4f}")
+        ax.set_xlabel("epoch")
+        ax.set_ylabel("noise-prediction MSE")
+        ax.set_yscale("log")
+        ax.set_title(f"Diffusion policy training loss ({arch})")
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(png, dpi=130)
+        plt.close(fig)
+
+    print(f"Loss CSV  -> {hist_csv}")
+    print(f"          -> {summary_csv}")
+    print(f"Loss plot -> {png}")
+
+
 # ── Train ────────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
@@ -352,6 +456,14 @@ def main():
                          "(default: <results>/<arch>/checkpoints)")
     ap.add_argument("--ckpt-every", type=int, default=CKPT_EVERY,
                     help="save a checkpoint every N epochs (0 disables periodic saves)")
+    ap.add_argument("--warmstart", nargs="?", const="auto", default="auto", metavar="CKPT",
+                    help="warm-start weights from an existing checkpoint (ON by "
+                         "default). With no value, uses the last periodic snapshot in "
+                         "--ckpt-dir for this arch (the mlp/ or transformer/ "
+                         "checkpoints dir); or pass an explicit .pt path. Disable "
+                         "with --no-warmstart.")
+    ap.add_argument("--no-warmstart", action="store_true",
+                    help="train from random init instead of warm-starting")
     args = ap.parse_args()
 
     # Keep mlp and transformer runs from overwriting each other: unless the user
@@ -401,6 +513,21 @@ def main():
         timesteps=TIMESTEPS, horizon=H, action_dim=NU, learning_rate=LR,
     )
 
+    # Warm start (ON by default): seed the (raw + EMA) weights from a prior
+    # checkpoint instead of random init. "auto" resolves to the last periodic
+    # snapshot in this arch's checkpoints dir; an explicit path is also accepted.
+    # A fresh run with no snapshots yet falls back to random init (not an error);
+    # pass --no-warmstart to force random init always.
+    warmstart = None if args.no_warmstart else args.warmstart
+    if warmstart == "auto":
+        warmstart = find_last_checkpoint(args.ckpt_dir, args.arch)
+        if warmstart is None:
+            print(f"No '{args.arch}_epoch*.pt' snapshots in {args.ckpt_dir}; "
+                  f"training from random init.")
+    if warmstart is not None:
+        load_warmstart(policy, warmstart, dataset.cond_dim, net_kwargs)
+        print(f"Warm-started weights from {warmstart}")
+
     print(f"Training arch='{args.arch}' on {DEVICE} for {args.epochs} epochs "
           f"({sum(p.numel() for p in network.parameters()):,} params)...")
     if args.ckpt_every > 0:
@@ -409,8 +536,10 @@ def main():
     # After each epoch: report held-out validation loss (EMA weights) and, every
     # N epochs, save a snapshot. The final epoch is skipped here -- it's written
     # once below as the canonical --ckpt path.
+    history = []   # (epoch, train_loss, val_loss) accumulated for the CSV + plot
     def on_epoch_end(epoch, avg_loss):
         val = eval_loss(policy, val_loader)
+        history.append((epoch, avg_loss, val))
         print(f"  ↳ val_loss={val:.5f}")
         if args.ckpt_every > 0 and epoch % args.ckpt_every == 0 and epoch != args.epochs:
             snap = os.path.join(args.ckpt_dir, f"{args.arch}_epoch{epoch:04d}.pt")
@@ -425,8 +554,12 @@ def main():
     print(f"Saved checkpoint to {args.ckpt}")
 
     # Final held-out report on the untouched test split.
-    print(f"Final  val_loss={eval_loss(policy, val_loader):.5f}  "
-          f"test_loss={eval_loss(policy, test_loader):.5f}")
+    final_val  = eval_loss(policy, val_loader)
+    final_test = eval_loss(policy, test_loader)
+    print(f"Final  val_loss={final_val:.5f}  test_loss={final_test:.5f}")
+
+    # Persist the per-epoch curves + final held-out losses (CSV + PNG).
+    write_loss_logs(args.arch, history, final_val, final_test)
 
 
 if __name__ == "__main__":
