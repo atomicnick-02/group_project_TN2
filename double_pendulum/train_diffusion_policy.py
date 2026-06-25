@@ -60,7 +60,7 @@ X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)  # upright
 TIMESTEPS    = 25
 EPOCHS       = 400
 BATCH_SIZE   = 512
-LR           = 5*1e-4
+LR           = 1e-4
 SEED         = 42
 
 # Train/val/test split. The expert trajectories are divided 70/15/15 at the
@@ -82,10 +82,10 @@ MLP_HIDDEN   = 512
 
 # Transformer-specific
 TF_D_MODEL   = 192
-TF_HEADS     = 4
-TF_LAYERS    = 3
+TF_HEADS     = 2
+TF_LAYERS    = 2
 TF_FF        = 512
-TF_DROPOUT   = 0.15
+TF_DROPOUT   = 0.0
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
