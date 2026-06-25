@@ -79,14 +79,24 @@ For the diffusion model, we first need to define the time parameters of the
 noising and denoising process.
 \begin{itemize}[leftmargin=1.5em]
   \item \textbf{Time Horizon} $T$ is the number of time steps in the diffusion process.
-  \item \textbf{$\beta$ Schedule} $\beta_t$ is a set of hyperparameters that control
+  \item \textbf{$\beta$ Schedule} $\beta_t$ (with t $\in \{1,2, \ldots ,T\}$) is a set of hyperparameters that control
   how quickly the noise is added to the data during the forward diffusion process.
   It is a monotonic increasing sequence of values that determine the variance of the noise
   \item \textbf{Noise Schedule} $\alpha_t$ = $1 - \beta_t$ is a set of hyperparameters 
   that control how quickly the noise is removed.
   \item \textbf{Cumulative Noise Schedule} $\bar{\alpha}_t$ = $\prod_{s=1}^{t} \alpha_s$ 
-  \item 
 \end{itemize}
+So we can define the forward diffusion process as follows:
+\begin{equation}
+  x_t = \sqrt{\bar{\alpha}_t} x_0 + \sqrt{1 - \bar{\alpha}_t} \epsilon, \quad \epsilon \sim \mathcal{N}(0, I)
+\end{equation}
+where $x_0$ is the original data (action sequence) and $x_t$ is the noisy version of the data at time step $t$.
+So now we need to define a procedure to undo the noise in $T$ steps.
+The reverse diffusion process is defined as follows:
+
+\begin{equation}
+  x_0 = \frac{1}{\sqrt{\bar{\alpha}_t}} \cdot x_t - \frac{\sqrt{1 - \bar{\alpha}_t}}{\sqrt{\bar{\alpha}_t}} \cdot \epsilon_\theta(x_t, t), \quad \epsilon_\theta(x_t, t) \sim \mathcal{N}(0, I)  
+\end{equation}
 
 
 \end{document}

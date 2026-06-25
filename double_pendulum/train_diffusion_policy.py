@@ -23,6 +23,7 @@ Pipeline:
 
 import os
 import sys
+import csv
 import json
 import argparse
 import numpy as np
@@ -43,8 +44,12 @@ from diffusion_models.diffusion_policy import (
 # ── Config (defaults; some overridable via CLI) ──────────────────────────────
 H5_PATH      = "double_pendulum/results/expert_trajectories.h5"
 OUT_DIR      = "double_pendulum/results"
-CKPT_PATH    = os.path.join(OUT_DIR, "diffusion_policy.pt")
+CKPT_DIR     = os.path.join(OUT_DIR, "checkpoints")   # final ckpts -> checkpoints/<arch>/
+LOSS_DIR     = os.path.join(OUT_DIR, "losses")        # per-epoch train/val curves + test summary
 STATS_PATH   = os.path.join(OUT_DIR, "norm_stats.json")
+
+# Fixed three-way trajectory-level holdout (see train_val_test_keys).
+SPLIT_RATIOS = (0.7, 0.15, 0.15)                      # train / val / test
 
 NX, NU       = 4, 2          # raw state dim (from HDF5), action dim
 NX_FEAT      = 6             # feature dim: [sin(q1), cos(q1), sin(q2), cos(q2), dq1, dq2]
@@ -69,7 +74,7 @@ MLP_HIDDEN   = 256
 
 # Transformer-specific
 TF_D_MODEL   = 128
-TF_HEADS     = 3
+TF_HEADS     = 4
 TF_LAYERS    = 4
 TF_FF        = 256
 TF_DROPOUT   = 0.0
@@ -209,44 +214,55 @@ class DiffusionPolicyDataset(Dataset):
         return torch.from_numpy(cond), torch.from_numpy(acts)
 
 
-# ── K-fold split (at the trajectory level, before any window slicing) ────────
-def kfold_train_val_keys(h5_path, n_folds, fold, seed):
-    """Return (train_keys, val_keys) for one fold of a trajectory-level split.
+# ── Train/val/test split (at the trajectory level, before any window slicing) ─
+def train_val_test_keys(h5_path, ratios=SPLIT_RATIOS, seed=SEED):
+    """Partition trajectory keys into (train, val, test) by the given ratios.
 
     Splitting by trajectory (not by sliced window) keeps every window from a
-    given trajectory on the same side of the train/val boundary -> no leakage.
-    Deterministic given (n_folds, fold, seed).
+    given trajectory on the same side of every boundary -> no leakage between
+    sets. Deterministic given seed. Ratios are normalized; the test set takes
+    the remainder so the three sets exactly partition all trajectories.
     """
     import h5py
     with h5py.File(h5_path, "r") as f:
         keys = np.asarray(sorted(f.keys()))
-    if n_folds < 2:
-        return keys.tolist(), []                      # no split: train on all
-    if not (0 <= fold < n_folds):
-        raise ValueError(f"fold must be in [0,{n_folds}), got {fold}")
-    if len(keys) < n_folds:
-        raise ValueError(f"{len(keys)} trajectories < n_folds={n_folds}")
+    n = len(keys)
+    if n < 3:
+        raise ValueError(f"need >=3 trajectories for a train/val/test split, got {n}")
 
-    perm = np.random.default_rng(seed).permutation(len(keys))
-    val_idx = np.array_split(perm, n_folds)[fold]     # near-equal folds
-    val_keys = sorted(keys[val_idx].tolist())
-    train_keys = sorted(set(keys.tolist()) - set(val_keys))
-    return train_keys, val_keys
+    r = np.asarray(ratios, dtype=float)
+    r = r / r.sum()
+    perm = np.random.default_rng(seed).permutation(n)
+    n_train = int(round(r[0] * n))
+    n_val   = int(round(r[1] * n))
+    # Guard against rounding emptying val/test on small datasets: keep >=1 each.
+    n_train = min(n_train, n - 2)
+    n_val   = min(max(n_val, 1), n - n_train - 1)
+
+    train_keys = sorted(keys[perm[:n_train]].tolist())
+    val_keys   = sorted(keys[perm[n_train:n_train + n_val]].tolist())
+    test_keys  = sorted(keys[perm[n_train + n_val:]].tolist())
+    return train_keys, val_keys, test_keys
 
 
 @torch.no_grad()
 def validation_loss(policy, loader, scheduler, timesteps, seed=0):
-    """Mean noise-prediction MSE over `loader`, mirroring the train objective.
+    """Mean noise-prediction MSE over `loader` (val or test), mirroring the
+    train objective.
 
-    Uses the EMA model (the one saved for inference) in eval mode. A fixed
-    generator makes the diffusion timesteps/noise reproducible across folds.
+    Uses the EMA model (the one saved for inference) in eval mode. A fixed seed
+    makes the diffusion timesteps/noise reproducible, so the val curve reflects
+    model change rather than noise change across epochs.
+
+    NOTE: this reseeds the global RNG. Call it AFTER training (e.g. test loss),
+    or via eval_loss_keep_rng during training, which restores RNG state.
     """
     if loader is None or len(loader.dataset) == 0:
         return float("nan")
     model = policy.ema_model
     model.eval()
     # Seed global RNG so both t (randint) and the noise (randn_like inside
-    # add_noise) are reproducible across folds. Safe: val runs after training.
+    # add_noise) are reproducible across calls.
     torch.manual_seed(seed)
     total, n = 0.0, 0
     for cond, action_seq in loader:
@@ -258,6 +274,24 @@ def validation_loss(policy, loader, scheduler, timesteps, seed=0):
         total += torch.nn.functional.mse_loss(eps_pred, epsilon).item() * action_seq.size(0)
         n += action_seq.size(0)
     return total / max(n, 1)
+
+
+def eval_loss_keep_rng(policy, loader, scheduler, timesteps, seed=0):
+    """validation_loss, but transparent to the global RNG so it can be called
+    DURING training. validation_loss reseeds (torch.manual_seed) for a
+    reproducible measurement; the train loop draws its noise from the same
+    global RNG, so without save/restore a per-epoch val pass would make every
+    epoch's training noise identical. We snapshot and restore CPU+CUDA RNG
+    state around the call so training stochasticity is untouched.
+    """
+    cpu_state  = torch.get_rng_state()
+    cuda_state = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    try:
+        return validation_loss(policy, loader, scheduler, timesteps, seed=seed)
+    finally:
+        torch.set_rng_state(cpu_state)
+        if cuda_state is not None:
+            torch.cuda.set_rng_state_all(cuda_state)
 
 
 # ── Network builder (single source of truth, shared with eval) ───────────────
@@ -304,12 +338,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--arch", choices=["mlp", "transformer"], default="transformer",)
     ap.add_argument("--epochs", type=int, default=EPOCHS)
-    ap.add_argument("--ckpt", default=CKPT_PATH,
-                    help="checkpoint output path (use distinct names per arch)")
-    ap.add_argument("--n-folds", type=int, default=5,
-                    help="K-fold count for the trajectory-level split (1 = no split, train on all)")
-    ap.add_argument("--fold", type=int, default=0,
-                    help="which fold (0-based) is held out for validation")
+    ap.add_argument("--ckpt", default=None,
+                    help="checkpoint output path; default checkpoints/<arch>/diffusion_policy_<arch>.pt")
+    ap.add_argument("--val-every", type=int, default=1,
+                    help="compute & display held-out validation loss every N epochs (0 = off)")
     ap.add_argument("--save-every", type=int, default=20,
                     help="save an intermediate checkpoint every N epochs (0 = off)")
     args = ap.parse_args()
@@ -318,26 +350,35 @@ def main():
     np.random.seed(SEED)
     Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
 
-    # ── Split BEFORE loading: pick the train/val trajectory keys for this fold ──
-    train_keys, val_keys = kfold_train_val_keys(H5_PATH, args.n_folds, args.fold, SEED)
-    if val_keys:
-        print(f"K-fold: n_folds={args.n_folds} fold={args.fold} -> "
-              f"{len(train_keys)} train / {len(val_keys)} val trajectories")
-    else:
-        print("K-fold: disabled (n_folds<2) -> training on all trajectories")
+    # Final checkpoints live in a per-arch folder so mlp/transformer runs never
+    # clobber each other; periodic (epoch) checkpoints land beside the final one.
+    ckpt = (Path(CKPT_DIR) / args.arch / f"diffusion_policy_{args.arch}.pt"
+            if args.ckpt is None else Path(args.ckpt))
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+
+    # ── Split BEFORE loading: 70/15/15 train/val/test at the trajectory level ──
+    train_keys, val_keys, test_keys = train_val_test_keys(H5_PATH, SPLIT_RATIOS, SEED)
+    print(f"Split (seed={SEED}): {len(train_keys)} train / {len(val_keys)} val / "
+          f"{len(test_keys)} test trajectories "
+          f"({SPLIT_RATIOS[0]:.0%}/{SPLIT_RATIOS[1]:.0%}/{SPLIT_RATIOS[2]:.0%})")
 
     dataset = DiffusionPolicyDataset(H5_PATH, keys=train_keys)
     dataset.save_stats(STATS_PATH)
     print(f"Train dataset: {len(dataset)} windows | cond_dim={dataset.cond_dim} "
           f"| action_seq=({H},{NU})")
 
-    # Val fold reuses the train fold's normalization stats (no leakage).
-    val_loader = None
-    if val_keys:
-        val_ds = DiffusionPolicyDataset(H5_PATH, keys=val_keys, stats=dataset.get_stats())
-        val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False,
-                                num_workers=2, pin_memory=(DEVICE == "cuda"))
-        print(f"Val dataset:   {len(val_ds)} windows")
+    # Val/test reuse the TRAIN fold's normalization stats -- computing their own
+    # would leak held-out data into the normalization.
+    def _make_loader(keys, name):
+        if not keys:
+            return None
+        ds = DiffusionPolicyDataset(H5_PATH, keys=keys, stats=dataset.get_stats())
+        print(f"{name} dataset: {len(ds)} windows")
+        return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False,
+                          num_workers=2, pin_memory=(DEVICE == "cuda"))
+
+    val_loader  = _make_loader(val_keys,  "Val ")
+    test_loader = _make_loader(test_keys, "Test")
 
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True,
                         num_workers=2, drop_last=True, pin_memory=(DEVICE == "cuda"))
@@ -352,10 +393,17 @@ def main():
     print(f"Training arch='{args.arch}' on {DEVICE} for {args.epochs} epochs "
           f"({sum(p.numel() for p in network.parameters()):,} params)...")
 
-    # Periodic checkpointing: every --save-every epochs, write a numbered ckpt
-    # alongside the final one (e.g. diffusion_policy_epoch020.pt).
-    ckpt = Path(args.ckpt)
+    # Per-epoch bookkeeping: record (epoch, train_loss, val_loss) for the curve,
+    # display the val loss live, and drop periodic checkpoints by the final one.
+    history = []   # rows of [epoch, train_loss, val_loss]
     def on_epoch_end(epoch, avg_loss):
+        vloss = float("nan")
+        if (val_loader is not None and args.val_every > 0 and
+                (epoch % args.val_every == 0 or epoch == args.epochs)):
+            vloss = eval_loss_keep_rng(policy, val_loader, scheduler, TIMESTEPS)
+            print(f"            val_loss(EMA, noise-pred MSE)={vloss:.5f}")
+        history.append([epoch, avg_loss, vloss])
+
         if args.save_every > 0 and epoch % args.save_every == 0 and epoch < args.epochs:
             path = ckpt.with_name(f"{ckpt.stem}_epoch{epoch:03d}{ckpt.suffix}")
             torch.save(build_checkpoint(policy, args.arch, net_kwargs, dataset.cond_dim), path)
@@ -363,14 +411,42 @@ def main():
 
     policy.train(loader, epochs=args.epochs, on_epoch_end=on_epoch_end)
 
-    if val_loader is not None:
-        vloss = validation_loss(policy, val_loader, scheduler, TIMESTEPS)
-        print(f"Held-out fold {args.fold} val loss (EMA, noise-pred MSE): {vloss:.5f}")
+    # ── Held-out TEST loss: single final pass on data never seen in train/val ──
+    test_loss = float("nan")
+    if test_loader is not None:
+        test_loss = validation_loss(policy, test_loader, scheduler, TIMESTEPS)
+        print(f"Test loss (EMA, noise-pred MSE): {test_loss:.5f}")
+
+    # ── Persist loss curves + a run summary to the dedicated losses folder ──
+    Path(LOSS_DIR).mkdir(parents=True, exist_ok=True)
+    curve_path = Path(LOSS_DIR) / f"loss_history_{args.arch}.csv"
+    with open(curve_path, "w", newline="") as fp:
+        w = csv.writer(fp)
+        w.writerow(["epoch", "train_loss", "val_loss"])
+        for ep, tr, vl in history:
+            w.writerow([ep, f"{tr:.6f}", "" if np.isnan(vl) else f"{vl:.6f}"])
+
+    final_val = next((vl for _, _, vl in reversed(history) if not np.isnan(vl)),
+                     float("nan"))
+    _nan2none = lambda x: None if (isinstance(x, float) and np.isnan(x)) else x
+    summary = {
+        "arch": args.arch, "epochs": args.epochs, "seed": SEED,
+        "split_ratios": list(SPLIT_RATIOS),
+        "n_train_traj": len(train_keys), "n_val_traj": len(val_keys),
+        "n_test_traj": len(test_keys),
+        "final_train_loss": _nan2none(history[-1][1] if history else float("nan")),
+        "final_val_loss":   _nan2none(final_val),
+        "test_loss":        _nan2none(test_loss),
+    }
+    summary_path = Path(LOSS_DIR) / f"summary_{args.arch}.json"
+    with open(summary_path, "w") as fp:
+        json.dump(summary, fp, indent=2)
+    print(f"Saved loss curve to {curve_path} and summary to {summary_path}")
 
     # Final SELF-DESCRIBING checkpoint (EMA weights -> smoother inference
     # controller; eval loads model_state unchanged).
-    torch.save(build_checkpoint(policy, args.arch, net_kwargs, dataset.cond_dim), args.ckpt)
-    print(f"Saved checkpoint to {args.ckpt}")
+    torch.save(build_checkpoint(policy, args.arch, net_kwargs, dataset.cond_dim), ckpt)
+    print(f"Saved checkpoint to {ckpt}")
 
 
 if __name__ == "__main__":

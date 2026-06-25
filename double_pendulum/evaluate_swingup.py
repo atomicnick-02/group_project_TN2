@@ -13,13 +13,6 @@ bc controller loads behaviour_cloning/bc_policy_*.pt (a raw state_dict) with its
 own norm_stats.json, so both can be benchmarked head-to-head under the identical
 environment, start state and success criteria.
 
-INTERACTION (native MuJoCo viewer):
-    * Double-click a body (a pendulum link) to select it.
-    * Ctrl + right-drag  -> apply an external FORCE to the selected body.
-    * Ctrl + left-drag   -> apply an external TORQUE.
-    * The controller keeps running, so you can shove the pendulum mid-swing and
-      watch whether it recovers.
-
 Run from the repo root (so diffusion_models is importable):
     python double_pendulum/evaluate_swingup.py --controller diffusion
     python double_pendulum/evaluate_swingup.py --controller bc

@@ -41,13 +41,76 @@ import h5py
 from pathlib import Path
 
 from simulation import DoublePendulumEnv
-from evaluate_swingup import TVLQRController, wrap_to_pi
+from evaluate_swingup import wrap_to_pi
 
 current_dir = Path(__file__).resolve().parent
 results_dir = current_dir / "results"
 
 X_GOAL = np.array([np.pi, 0.0, 0.0, 0.0])
 DT_CTRL = 0.05
+
+
+# ── TVLQR controller (adapted from the reference script) ─────────────────────
+# Lives here because this dataset generator is now its only consumer: the
+# evaluation script (evaluate_swingup.py) dropped TVLQR in favour of the BC /
+# diffusion baselines. It loads the committed, working reference
+# (trajectory.csv / inputs.csv / K_matrix.npy) and tracks it with
+# deviation-triggered nearest-neighbour recovery.
+class TVLQRController:
+    """Trajectory-tracking baseline with deviation-triggered recovery."""
+
+    DEVIATION_THRESHOLD = 2.0
+
+    def __init__(self):
+        self.x_ref = np.loadtxt(results_dir / "trajectory.csv", delimiter=",", skiprows=1).T
+        self.u_ref = np.loadtxt(results_dir / "inputs.csv", delimiter=",", skiprows=1).T
+        self.K     = np.load(results_dir / "K_matrix.npy")
+        self.max_idx     = self.x_ref.shape[1] - 1
+        self.current_idx = 0
+
+    @staticmethod
+    def _feat(x, v_scale=0.1):
+        if x.ndim == 1:
+            p0, p1 = x[0], x[1]
+            v = x[2:] * v_scale
+            return np.concatenate(([np.cos(p0), np.sin(p0), np.cos(p1), np.sin(p1)], v))
+        p0, p1 = x[0, :], x[1, :]
+        v = x[2:, :] * v_scale
+        return np.vstack((np.cos(p0), np.sin(p0), np.cos(p1), np.sin(p1), v))
+
+    def _ranked(self, x, ref, k=1):
+        diff  = self._feat(ref) - self._feat(x).reshape(-1, 1)
+        dists = np.linalg.norm(diff, axis=0)
+        order = np.argsort(dists)
+        return order[:k], dists[order[:k]]
+
+    def _K_weighted(self, x, k=5):
+        idx, dists = self._ranked(x, self.x_ref, k=k)
+        w = 1.0 / (dists + 1e-6)
+        w = w / w.sum()
+        Ks = self.K[np.clip(idx, 0, len(self.K) - 1)]
+        return np.sum(w[:, None, None] * Ks, axis=0)
+
+    def reset(self):
+        self.current_idx = 0
+
+    def action(self, x):
+        target = self.x_ref[:, self.current_idx].reshape(4, 1)
+        _, d = self._ranked(x, target, k=1)
+        holding = self.current_idx >= self.max_idx
+        if d[0] > self.DEVIATION_THRESHOLD or holding:
+            best, _ = self._ranked(x, self.x_ref, k=1)
+            idx = best[0]
+            K = self._K_weighted(x, k=5)
+        else:
+            idx = self.current_idx
+            K = self.K[idx]
+            self.current_idx += 1
+
+        x_des, u_des = self.x_ref[:, idx], self.u_ref[:, idx]
+        err = x - x_des
+        err[0], err[1] = wrap_to_pi(err[0]), wrap_to_pi(err[1])
+        return u_des - K @ err
 
 
 def _ang_vel_err(x):

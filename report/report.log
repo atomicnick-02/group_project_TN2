@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.5) (preloaded format=pdflatex 2026.5.10)  26 JUN 2026 01:12
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.5) (preloaded format=pdflatex 2026.5.10)  26 JUN 2026 01:28
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -574,11 +574,11 @@ Package rerunfilecheck Info: File `report.out' has not changed.
 (rerunfilecheck)             Checksum: 12181CAED0D2DAE681B8915595553F2C;360.
  ) 
 Here is how much of TeX's memory you used:
- 15844 strings out of 469603
- 249353 string characters out of 5466555
- 881408 words of memory out of 5000000
- 44437 multiletter control sequences out of 15000+600000
- 637517 words of font info for 98 fonts, out of 8000000 for 9000
+ 15850 strings out of 469603
+ 249447 string characters out of 5466555
+ 884408 words of memory out of 5000000
+ 44439 multiletter control sequences out of 15000+600000
+ 637568 words of font info for 99 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
  75i,6n,79p,1057b,460s stack positions out of 10000i,1000n,20000p,200000b,200000s
  </home/nickv/.miktex/texmfs/data/fonts/pk/ljfour/jknappen/ec/dpi600/tcrm1095
@@ -591,9 +591,9 @@ home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmr10.pfb></ho
 me/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmr12.pfb></home
 /nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmr8.pfb></home/ni
 ckv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy10.pfb>
-Output written on report.pdf (3 pages, 117714 bytes).
+Output written on report.pdf (3 pages, 123189 bytes).
 PDF statistics:
- 89 PDF objects out of 1000 (max. 8388607)
- 9 named destinations out of 1000 (max. 500000)
+ 91 PDF objects out of 1000 (max. 8388607)
+ 11 named destinations out of 1000 (max. 500000)
  22553 words of extra memory for PDF output out of 24883 (max. 10000000)
 
