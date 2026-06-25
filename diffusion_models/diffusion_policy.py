@@ -152,9 +152,17 @@ class TrajectoryTransformer(nn.Module):
 
 # ── Noise scheduler ──────────────────────────────────────────────────────────────
 class Scheduler:
-    """Linear beta schedule with a forward-diffusion helper."""
+    """Linear beta schedule with a forward-diffusion helper.
 
-    def __init__(self, num_steps: int, device, start_beta: float = 0.0003, end_beta: float = 0.03):
+    end_beta is sized so the schedule actually reaches ~N(0,I) at the top
+    timestep: with num_steps=25, end_beta=0.4 gives terminal alpha_bar ~= 0.003
+    (terminal SNR ~= 0.003), vs. ~0.68 for the old 0.03. Sampling starts from
+    pure Gaussian noise, so a near-zero terminal SNR is required for the
+    inference prior to match the forward marginal q(x_T|x_0) (Lin et al. 2023);
+    the old value left ~83% of the action signal intact at x_T.
+    """
+
+    def __init__(self, num_steps: int, device, start_beta: float = 0.0003, end_beta: float = 0.4):
         self.num_steps  = num_steps
         self.device     = device
         self.beta_array = torch.linspace(start_beta, end_beta, num_steps).to(device)

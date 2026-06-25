@@ -37,8 +37,8 @@ from diffusion_models.diffusion_policy import (
 
 
 # ── Config (defaults; some overridable via CLI) ──────────────────────────────
-# H5_PATH      = "double_pendulum/results/expert_trajectories.h5"
-H5_PATH      = "double_pendulum/optimal_trajectories/expert_trajectories_kux_swingup_hold_mirrored.h5"
+H5_PATH      = "double_pendulum/results/expert_trajectories.h5"
+# H5_PATH      = "double_pendulum/optimal_trajectories/expert_trajectories_kux_swingup_hold_mirrored.h5"
 
 OUT_DIR      = "double_pendulum/results"
 CKPT_PATH    = os.path.join(OUT_DIR, "diffusion_policy.pt")
