@@ -43,7 +43,8 @@ H5_PATH      = "double_pendulum/optimal_trajectories/expert_trajectories_kux_swi
 OUT_DIR      = "double_pendulum/results"
 CKPT_PATH    = os.path.join(OUT_DIR, "diffusion_policy.pt")
 STATS_PATH   = os.path.join(OUT_DIR, "norm_stats.json")
-CKPT_DIR     = os.path.join(OUT_DIR, "checkpoints")  # periodic per-epoch snapshots
+CKPT_DIR     = os.path.join(OUT_DIR, "checkpoints")  # base dir for periodic snapshots
+                                                     # (per-arch subdir added below)
 CKPT_EVERY   = 20                                    # save a checkpoint every N epochs
 
 # Dedicated folder for training-loss logs (CSV) + curves (PNG), nested per-arch so
@@ -82,9 +83,9 @@ MLP_HIDDEN   = 512
 
 # Transformer-specific
 TF_D_MODEL   = 192
-TF_HEADS     = 2
+TF_HEADS     = 4
 TF_LAYERS    = 2
-TF_FF        = 512
+TF_FF        = 256
 TF_DROPOUT   = 0.0
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -448,12 +449,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--arch", choices=["mlp", "transformer"], default="transformer",)
     ap.add_argument("--epochs", type=int, default=EPOCHS)
-    ap.add_argument("--ckpt", default=None,
-                    help="final checkpoint output path "
-                         "(default: <results>/<arch>/diffusion_policy.pt)")
+    ap.add_argument("--ckpt", default=CKPT_PATH,
+                    help="final checkpoint output path (use distinct names per arch)")
     ap.add_argument("--ckpt-dir", default=None,
                     help="folder for periodic per-epoch checkpoints "
-                         "(default: <results>/<arch>/checkpoints)")
+                         "(default: <results>/checkpoints/<arch>, so transformer "
+                         "and mlp snapshots never mix)")
     ap.add_argument("--ckpt-every", type=int, default=CKPT_EVERY,
                     help="save a checkpoint every N epochs (0 disables periodic saves)")
     ap.add_argument("--warmstart", nargs="?", const="auto", default="auto", metavar="CKPT",
@@ -466,13 +467,10 @@ def main():
                     help="train from random init instead of warm-starting")
     args = ap.parse_args()
 
-    # Keep mlp and transformer runs from overwriting each other: unless the user
-    # passes explicit paths, nest checkpoints under an arch-specific subdirectory.
-    arch_dir = os.path.join(OUT_DIR, args.arch)
-    if args.ckpt is None:
-        args.ckpt = os.path.join(arch_dir, "diffusion_policy.pt")
+    # Keep each architecture's snapshots in its own directory unless the user
+    # overrides --ckpt-dir explicitly.
     if args.ckpt_dir is None:
-        args.ckpt_dir = os.path.join(arch_dir, "checkpoints")
+        args.ckpt_dir = os.path.join(CKPT_DIR, args.arch)
 
     torch.manual_seed(SEED)
     np.random.seed(SEED)
