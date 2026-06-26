@@ -25,8 +25,9 @@ Evaluation metrics recorded (per trial, then aggregated):
 
 Run from the repo root or from double_pendulum/ (both are put on sys.path):
     python double_pendulum/evaluate_methods.py
-    python double_pendulum/evaluate_methods.py --quick      # tiny smoke test
+    python double_pendulum/evaluate_methods.py --quick           # tiny smoke test
     python double_pendulum/evaluate_methods.py --n-nominal 10 --device cuda
+    python double_pendulum/evaluate_methods.py --no-success-rate # only random-init
 """
 
 import os
@@ -37,7 +38,6 @@ import argparse
 from pathlib import Path
 
 import numpy as np
-import mujoco
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -110,24 +110,26 @@ def build_controller(name, device, paths, compile_diff=True):
 def rollout(env, ctrl, q0, v0, noise_sigma, rng,
             max_steps, dt_control, hold_steps, angle_tol, vel_tol):
     """
-    Simulate one swing-up attempt.
+    Simulate one swing-up attempt through the headless DoublePendulumEnv gym API.
 
-    The controller observes a NOISY copy of the state (Gaussian obs-noise with
-    std `noise_sigma` on angles and VEL_NOISE_FACTOR*noise_sigma on velocities);
-    the true (clean) state is what we record and score. Physics is stepped at the
-    sim rate with the control held over each dt_control window (mirrors
-    evaluate_swingup.py: frame_skip=1 + manual substeps).
+    The whole episode is driven by env.reset()/env.step(): the env is a headless
+    MuJoCo environment (render_mode=None) whose frame_skip is set so a single
+    step() advances exactly one dt_control window. The controller observes a NOISY
+    copy of the env's state (Gaussian obs-noise with std `noise_sigma` on angles
+    and VEL_NOISE_FACTOR*noise_sigma on velocities); the clean state the env
+    returns is what we record and score. The env returns angles wrapped to
+    [-pi, pi]; both controllers use sin/cos angular features, so that wrapping is
+    transparent to them (success/metrics handle it via wrap_to_pi / np.unwrap).
     """
-    mujoco.mj_resetData(env.model, env.data)
-    env.data.qpos[:2] = q0
-    env.data.qvel[:2] = v0
-    mujoco.mj_forward(env.model, env.data)
+    # One env.step() == one control window: frame_skip = dt_control / dt_sim.
+    dt_sim = env.model.opt.timestep
+    env.frame_skip = max(1, int(round(dt_control / dt_sim)))
 
-    x0 = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
-    ctrl.reset(x0)
+    obs, _ = env.reset(options={"qpos": np.asarray(q0, dtype=np.float64),
+                                "qvel": np.asarray(v0, dtype=np.float64)})
+    x = np.asarray(obs[:4], dtype=np.float64)
+    ctrl.reset(x)
 
-    dt_sim  = env.model.opt.timestep
-    n_sub   = max(1, int(round(dt_control / dt_sim)))
     max_tau = float(env.action_space.high[0])
     sigma_v = np.array([noise_sigma, noise_sigma,
                         noise_sigma * VEL_NOISE_FACTOR,
@@ -137,7 +139,6 @@ def rollout(env, ctrl, q0, v0, noise_sigma, rng,
     consecutive_hold, success_step = 0, None
 
     for step in range(max_steps):
-        x = np.concatenate([env.data.qpos[:2], env.data.qvel[:2]])
         x_obs = x + rng.normal(0.0, sigma_v) if noise_sigma > 0 else x
 
         t0 = time.perf_counter()
@@ -159,9 +160,8 @@ def rollout(env, ctrl, q0, v0, noise_sigma, rng,
         else:
             consecutive_hold = 0
 
-        env.data.ctrl[:] = u
-        for _ in range(n_sub):
-            mujoco.mj_step(env.model, env.data)
+        obs, _, _, _, _ = env.step(u)
+        x = np.asarray(obs[:4], dtype=np.float64)
 
     return {
         "t": np.array(t_log), "x": np.array(x_log), "u": np.array(u_log),
@@ -187,8 +187,11 @@ def compute_metrics(roll, dt_control, hold_steps, angle_tol, vel_tol):
     if success:
         post = ang_err[success_step:]
         ss_angle_err = float(np.mean(post))
-        ss_state_std = float(np.mean([np.std(x[success_step:, 0]),
-                                      np.std(x[success_step:, 1])]))
+        # Positional jitter measured around the goal in wrap-safe coords: the env
+        # returns angles wrapped to [-pi, pi], so the raw std of q1 at the upright
+        # (q1=pi) boundary would spuriously blow up as it flips between +/-pi.
+        ss_state_std = float(np.mean([np.std(wrap_to_pi(x[success_step:, 0] - GOAL[0])),
+                                      np.std(wrap_to_pi(x[success_step:, 1] - GOAL[1]))]))
         held_to_end  = bool(ang_err[-1] < angle_tol and vel_err[-1] < vel_tol)
         t_success    = float(success_step * dt_control)
     else:
@@ -343,15 +346,57 @@ def _bar(ax, vals, errs, title, ylabel, log=False):
             ax.annotate(f"{v:.3g}", (x, v), ha="center", va="bottom", fontsize=9)
 
 
-def make_plots(bc_df, diff_df, summary, rob, bc_ex, diff_ex, plots_dir, dt_control):
+def _success_panel(ax, bc_nom, diff_nom, rand_summary=None, random_noise=None):
+    """Success-rate panel for the headline figure. Given a random-init summary it
+    shows nominal vs random-init as grouped bars per method (so the off-
+    distribution collapse is visible in one panel); otherwise it falls back to
+    the nominal-only bar."""
+    xs = np.arange(2)
+    ax.set_xticks(xs); ax.set_xticklabels(["BC", "Diffusion"])
+    ax.set_ylabel("success rate"); ax.set_ylim(0, 1.08)
+    ax.grid(True, axis="y", alpha=0.3)
+
+    def _annotate(rects):
+        for r in rects:
+            h = r.get_height()
+            if np.isfinite(h):
+                ax.annotate(f"{h:.2g}", (r.get_x() + r.get_width() / 2, h),
+                            ha="center", va="bottom", fontsize=8)
+
+    if rand_summary is None:
+        _annotate(ax.bar(xs, [bc_nom, diff_nom], width=0.6,
+                         color=[BC_COLOR, DIFF_COLOR], alpha=0.85))
+        ax.set_title("Success rate (nominal)")
+        return
+
+    rs = rand_summary.set_index("method")["success_rate"]
+    rnd = [float(rs.get("bc", np.nan)), float(rs.get("diffusion", np.nan))]
+    w = 0.38
+    _annotate(ax.bar(xs - w / 2, [bc_nom, diff_nom], w,
+                     color=[BC_COLOR, DIFF_COLOR], alpha=0.85))
+    _annotate(ax.bar(xs + w / 2, rnd, w,
+                     color=[BC_COLOR, DIFF_COLOR], alpha=0.45, hatch="//"))
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(facecolor="gray", alpha=0.85, label="nominal"),
+                       Patch(facecolor="gray", alpha=0.45, hatch="//",
+                             label="random-init")],
+              fontsize=8, loc="upper right")
+    n = int(rand_summary["n_runs"].iloc[0])
+    extra = f", noise={random_noise}" if random_noise is not None else ""
+    ax.set_title(f"Success rate: nominal vs random-init\n"
+                 f"(random-init: n={n}{extra})")
+
+
+def make_plots(bc_df, diff_df, summary, rob, bc_ex, diff_ex, plots_dir, dt_control,
+               rand_summary=None, random_noise=None):
     plots_dir.mkdir(parents=True, exist_ok=True)
     s_bc   = summary[summary["method"] == "bc"].iloc[0]
     s_diff = summary[summary["method"] == "diffusion"].iloc[0]
 
     # 1) metric comparison bars (the headline figure)
     fig, axs = plt.subplots(2, 3, figsize=(16, 9))
-    _bar(axs[0, 0], [s_bc["success_rate"], s_diff["success_rate"]], None,
-         "Success rate (nominal)", "fraction")
+    _success_panel(axs[0, 0], s_bc["success_rate"], s_diff["success_rate"],
+                   rand_summary, random_noise)
     _bar(axs[0, 1], [s_bc["time_to_success_s_mean"], s_diff["time_to_success_s_mean"]],
          None, "Time to success", "seconds")
     _bar(axs[0, 2],
@@ -397,8 +442,12 @@ def make_plots(bc_df, diff_df, summary, rob, bc_ex, diff_ex, plots_dir, dt_contr
         labels = ["q1 (shoulder)", "q2 (elbow)", "q1_dot", "q2_dot"]
         fig, axs = plt.subplots(2, 2, figsize=(15, 9))
         for i, ax in enumerate(axs.ravel()):
-            ax.plot(rb["t"], rb["x"][:, i], color=BC_COLOR, label="BC")
-            ax.plot(rd["t"], rd["x"][:, i], color=DIFF_COLOR, label="Diffusion")
+            # angles come back wrapped to [-pi, pi]; unwrap the two position
+            # traces so the swing-up reads continuously against the goal at pi.
+            yb = np.unwrap(rb["x"][:, i]) if i < 2 else rb["x"][:, i]
+            yd = np.unwrap(rd["x"][:, i]) if i < 2 else rd["x"][:, i]
+            ax.plot(rb["t"], yb, color=BC_COLOR, label="BC")
+            ax.plot(rd["t"], yd, color=DIFF_COLOR, label="Diffusion")
             ax.axhline(GOAL[i], color="r", ls="--", alpha=0.6, label="goal")
             ax.set_title(labels[i]); ax.set_xlabel("Time (s)")
             ax.grid(True, alpha=0.3); ax.legend()
@@ -490,12 +539,15 @@ def main():
     p.add_argument("--angle-tol", type=float, default=0.20)
     p.add_argument("--vel-tol", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--n-random", type=int, default=30,
+    p.add_argument("--n-random", type=int, default=10,
                    help="random-initial-position stress-test runs per method")
-    p.add_argument("--random-noise", type=float, default=0.25,
+    p.add_argument("--random-noise", type=float, default=0.025,
                    help="observation-noise sigma for the random-init battery")
     p.add_argument("--no-random-init", action="store_true",
                    help="skip the random-initial-position stress test")
+    p.add_argument("--no-success-rate", action="store_true",
+                   help="skip the noise-sweep battery (nominal success rate + "
+                        "robustness-vs-noise + comparison summary/plots)")
     p.add_argument("--no-compile", action="store_true",
                    help="disable torch.compile for the diffusion model (CUDA only)")
     p.add_argument("--out", default=None,
@@ -536,51 +588,57 @@ def main():
           f"| nominal={args.n_nominal} robust/level={args.n_robust} "
           f"max_steps={args.max_steps}")
 
-    # 1) BC, then 2) Diffusion -- same battery, same env/criteria. A checkpoint
-    # can be transiently absent (e.g. a training run is regenerating it), so each
-    # method is skipped (not crashed) if its files are missing.
+    # A checkpoint can be transiently absent (e.g. a training run is regenerating
+    # it), so each method is skipped (not crashed) if its files are missing.
     ckpts = {"bc": (paths["bc_ckpt"], paths["bc_stats"]),
              "diffusion": (paths["diff_ckpt"], paths["diff_stats"])}
+
+    # Success-rate noise-sweep battery: run 1) BC then 2) Diffusion over the same
+    # battery/env/criteria, then combine into the comparison summary. Plotting is
+    # deferred to the end so the headline figure can fold in the random-init
+    # success rate. Toggle the whole battery off with --no-success-rate.
     dfs, exs = {}, {}
-    for name in ("bc", "diffusion"):
-        ckpt, stats = ckpts[name]
-        missing = [str(p) for p in (ckpt, stats) if not Path(p).exists()]
-        if missing:
-            print(f"\n[skip] {name.upper()}: missing {missing}")
-            continue
-        dfs[name], exs[name] = run_method(
-            name, device, paths, out_root,
-            args.noise_levels, args.n_nominal, args.n_robust,
-            args.max_steps, args.dt_control, args.hold_steps,
-            args.angle_tol, args.vel_tol, args.seed,
-            compile_diff=not args.no_compile)
+    summary = rob = None
+    if not args.no_success_rate:
+        for name in ("bc", "diffusion"):
+            ckpt, stats = ckpts[name]
+            missing = [str(p) for p in (ckpt, stats) if not Path(p).exists()]
+            if missing:
+                print(f"\n[skip] {name.upper()}: missing {missing}")
+                continue
+            dfs[name], exs[name] = run_method(
+                name, device, paths, out_root,
+                args.noise_levels, args.n_nominal, args.n_robust,
+                args.max_steps, args.dt_control, args.hold_steps,
+                args.angle_tol, args.vel_tol, args.seed,
+                compile_diff=not args.no_compile)
 
-    # 3) combine -- only when BOTH methods ran (the comparison needs both)
-    if "bc" in dfs and "diffusion" in dfs:
-        summary, rob = build_summary(dfs["bc"], dfs["diffusion"], out_root)
-        make_plots(dfs["bc"], dfs["diffusion"], summary, rob,
-                   exs["bc"], exs["diffusion"], plots_dir, args.dt_control)
-        pd.set_option("display.float_format", lambda v: f"{v:.4g}")
-        print("\n================  SUMMARY  ================")
-        print(summary.to_string(index=False))
-        print("\n========  SUCCESS RATE vs NOISE  =========")
-        print(rob.pivot(index="noise_sigma", columns="method",
-                        values="success_rate").to_string())
-        print("\nDone.")
+        # combine -- only when BOTH methods ran (the comparison needs both)
+        if "bc" in dfs and "diffusion" in dfs:
+            summary, rob = build_summary(dfs["bc"], dfs["diffusion"], out_root)
+            pd.set_option("display.float_format", lambda v: f"{v:.4g}")
+            print("\n================  SUMMARY  ================")
+            print(summary.to_string(index=False))
+            print("\n========  SUCCESS RATE vs NOISE  =========")
+            print(rob.pivot(index="noise_sigma", columns="method",
+                            values="success_rate").to_string())
+        else:
+            ran = sorted(dfs) or ["nothing"]
+            missing = [m for m in ("bc", "diffusion") if m not in dfs]
+            print(f"\n[partial] Ran {ran}; per-trial CSVs saved under {out_root}.")
+            print(f"[partial] The combined comparison needs BOTH methods; missing: {missing}.")
+            if "diffusion" in missing:
+                print("          results/diffusion_policy.pt is absent -- a diffusion "
+                      "training run may be regenerating it.\n"
+                      "          Re-run this script once that file exists to get the "
+                      "full BC-vs-Diffusion comparison.")
     else:
-        ran = sorted(dfs) or ["nothing"]
-        missing = [m for m in ("bc", "diffusion") if m not in dfs]
-        print(f"\n[partial] Ran {ran}; per-trial CSVs saved under {out_root}.")
-        print(f"[partial] The combined comparison needs BOTH methods; missing: {missing}.")
-        if "diffusion" in missing:
-            print("          results/diffusion_policy.pt is absent -- a diffusion "
-                  "training run may be regenerating it.\n"
-                  "          Re-run this script once that file exists to get the "
-                  "full BC-vs-Diffusion comparison.")
+        print("\n[skip] success-rate noise-sweep battery (--no-success-rate)")
 
-    # 4) random-initial-position stress test: n_random runs per method from
-    #    uniformly random start angles at a fixed heavy noise -> success rate.
-    #    Runs per-method (independent of the combined comparison above).
+    # Random-initial-position stress test: n_random runs per method from uniformly
+    # random start angles at a fixed heavy noise -> success rate. Its per-method
+    # rate is folded into the headline comparison figure below.
+    rand_summary = None
     if not args.no_random_init:
         rand_rows = []
         for name in ("bc", "diffusion"):
@@ -611,6 +669,18 @@ def main():
             print(rand_summary.to_string(index=False))
             print(f"\nRandom-init summary -> "
                   f"{out_root / 'random_init_success_rate.csv'}")
+
+    # Plots last: the headline figure folds in the random-init success rate when
+    # both batteries produced a per-method rate (otherwise it shows nominal only).
+    if summary is not None:
+        rand_for_plot = (rand_summary
+                         if rand_summary is not None
+                         and set(rand_summary["method"]) >= {"bc", "diffusion"}
+                         else None)
+        make_plots(dfs["bc"], dfs["diffusion"], summary, rob,
+                   exs["bc"], exs["diffusion"], plots_dir, args.dt_control,
+                   rand_summary=rand_for_plot, random_noise=args.random_noise)
+        print("\nDone.")
 
 
 if __name__ == "__main__":

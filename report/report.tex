@@ -363,9 +363,13 @@ goal features,
       \in \mathbb{R}^{(K+1)\cdot 6} = \mathbb{R}^{30}.
 \end{equation}
 Including the velocity-carrying history (rather than a single state) gives the
-policy the information it needs to act on this second-order system, and the explicit
-goal token makes the same network reusable for different targets. Windows are
-zero-padded at the trajectory ends by repeating the first state / last action.
+policy the information it needs to act on this second-order system. The goal token
+leaves the architecture \emph{able}, in principle, to be retargeted to other
+set-points, but every trajectory in our dataset shares the single upright goal
+$x_g = [\pi,0,0,0]^\top$; the goal input is therefore effectively constant, and the
+network never actually learns to condition on it. Genuine retargeting to a
+different goal would require demonstrations at that goal. Windows are zero-padded at
+the trajectory ends by repeating the first state / last action.
 
 \subsubsection{Noise-Prediction Network}
 The network $\epsilon_\theta(\tilde a^{1:H}_t, t, c)$ predicts the noise added to the
@@ -385,15 +389,26 @@ interchangeable backbones behind a common $\texttt{forward}(a_{\text{noisy}}, t,
 The diffusion timestep enters as a sinusoidal embedding (transformer) or a small
 learned embedding (MLP), with $t$ normalized to $[0,1]$ by dividing by $T$.
 
-\subsubsection{Noise Schedule with Zero Terminal SNR}
-We use a linear $\beta$ schedule over $T = 20$ steps,
-$\beta_t \in [3\times10^{-4},\, 0.1]$. The upper end is deliberately large: sampling
-starts from pure Gaussian noise, so the inference prior only matches the forward
-marginal $q(x_T \mid x_0)$ if the terminal signal-to-noise ratio is driven to
-(approximately) zero, i.e.\ $\bar\alpha_T \approx 0$ (the zero-terminal-SNR
-condition, Lin et al.\ 2023). An earlier, milder schedule left a large fraction of
-the action signal intact at $x_T$, creating a train/inference mismatch that the
-denoiser never recovered from; enlarging \texttt{end\_beta} fixed it.
+\subsubsection{Noise Schedule and Terminal SNR}
+We use a linear $\beta$ schedule, $\beta_t \in [3\times10^{-4},\, 0.1]$, over the
+$T = 20$ diffusion steps. Sampling starts from pure Gaussian noise, so the inference
+prior only matches the forward marginal $q(x_T \mid x_0)$ to the extent that the
+terminal signal-to-noise ratio is small --- ideally the zero-terminal-SNR condition
+$\bar\alpha_T \approx 0$ (Lin et al.\ 2023). The upper end of the schedule is
+therefore deliberately large: an earlier, milder \texttt{end\_beta} left far more of
+the action signal intact at $x_T$, widening the train/inference mismatch, and
+raising it reduces that residual.
+
+How far this goes depends on \emph{both} \texttt{end\_beta} and the number of steps,
+since $\bar\alpha_T = \prod_{t=1}^{T}(1-\beta_t)$ keeps shrinking as more steps
+accumulate noise. At the short horizons we sample with, the condition is approached
+but not reached: at $T = 20$ this schedule gives $\bar\alpha_T \approx 0.35$, so
+roughly $60\%$ of the signal amplitude ($\sqrt{\bar\alpha_T}$) is still present at
+$x_T$, and only at much larger $T$ (e.g.\ $T \approx 100$, where
+$\bar\alpha_T \approx 0.006$) is the terminal SNR effectively zero. We therefore do
+\emph{not} claim a true zero-terminal-SNR prior; the enlarged \texttt{end\_beta}
+shrinks the prior mismatch enough to denoise reliably at the low, fast-to-sample
+$T$ that the closed-loop controller depends on.
 
 \subsubsection{Training Tricks}
 \begin{itemize}[leftmargin=1.5em]
@@ -453,4 +468,9 @@ the closed loop stable rather than merely plausible:
   \end{tabular}
 \end{table}
 
+\subsection{Comparison}
+% =====  RANDOM-INIT SUCCESS RATE  (n=50, noise=0.025)  =====
+%    method  n_runs  noise_sigma  n_success  success_rate
+%        bc      50        0.025         50             1
+% diffusion      50        0.025         47          0.94
 \end{document}

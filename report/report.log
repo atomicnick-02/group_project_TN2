@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999998 (MiKTeX 26.5) (preloaded format=xelatex 2026.5.8)  26 JUN 2026 12:07
+This is XeTeX, Version 3.141592653-2.6-0.999998 (MiKTeX 26.5) (preloaded format=xelatex 2026.5.8)  26 JUN 2026 14:42
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -595,7 +595,7 @@ LaTeX2e <2025-11-01>
 L3 programming layer <2026-03-20>
  ***********
 Package rerunfilecheck Info: File `report.out' has not changed.
-(rerunfilecheck)             Checksum: D3CD0105F1E2D8721A19F3559589E38A;2707.
+(rerunfilecheck)             Checksum: C805B2D90FB16B8A093F678D1C158BC6;2782.
  ) 
 Here is how much of TeX's memory you used:
  15912 strings out of 404750
@@ -604,6 +604,6 @@ Here is how much of TeX's memory you used:
  44497 multiletter control sequences out of 15000+600000
  634394 words of font info for 80 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 72i,12n,79p,1057b,476s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 72i,12n,79p,1057b,489s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
-Output written on report.xdv (9 pages, 170416 bytes).
+Output written on report.xdv (9 pages, 180816 bytes).
