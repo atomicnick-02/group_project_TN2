@@ -59,12 +59,13 @@ Behavioural-Cloning Pipeline for Double-Pendulum Swing-Up}
 \clearpage
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Introduction}
-The goal of this project is to compare the performance of 2 different learning-
-based control methods. The first method is a behavioural cloning approach, 
+The goal of this project is to compare the performance of 2 different Imitation control methods.
+ The first method is a behavioural cloning approach, 
 where we use a dataset of expert demonstrations to train a policy 
-that mimics the expert's actions. The second method is a diffusion policy approach,
-where we use a diffusion model to learn a policy that can generate actions based on
-the current state of the system. We will evaluate the performance of both methods
+that mimics the expert's actions. The second is a diffusion policy approach,
+where we use a diffusion model to learn a policy that generates actions from noise 
+based on the current state of the system.
+ We will evaluate the performance of both methods
 in the \textbf{double pendulum swingup task} and the \textbf{stacking problem}.
 
 \subsection{Behavioural Cloning}
@@ -108,78 +109,40 @@ to predict the noise given the noisy data $x_t$ and the time step $t$.
 \label{alg:diffusion_training}
 \begin{algorithmic}[1]
 \Require Training dataset $\mathcal{D}$, diffusion steps $T$
-\State Initialize network parameters $\theta$
+\State $\theta \gets \text{init}$ \Comment{initialize network parameters}
 \Repeat
     \ForAll{$x_0 \in \mathcal{D}$}
-        \State Sample timestep $t \sim \mathrm{Uniform}\left(\{1,\ldots,T-1\}\right)$
-        \State Sample noise $\epsilon \sim \mathcal{N}(0,I)$
-        \State Construct noisy sample
-        \[
-        x_t=
-        \sqrt{\bar{\alpha}_t}\,x_0+
-        \sqrt{1-\bar{\alpha}_t}\,\epsilon
-        \]
-        \State Predict noise
-        \[
-        \hat{\epsilon}
-        =
-        \epsilon_\theta(x_t,t,c)
-        \]
-        \State Compute loss
-        \[
-        \mathcal{L}
-        =
-        \left\|
-        \hat{\epsilon}-\epsilon
-        \right\|_2^2
-        \]
+        \State $t \sim \mathrm{Uniform}\{1,\ldots,T-1\}$ \Comment{sample a diffusion timestep}
+        \State $\epsilon \sim \mathcal{N}(0,I)$ \Comment{sample Gaussian noise}
+        \State $x_t = \sqrt{\bar{\alpha}_t}\,x_0 + \sqrt{1-\bar{\alpha}_t}\,\epsilon$ \Comment{forward (noising) step}
+        \State $\hat{\epsilon} = \epsilon_\theta(x_t,t,c)$ \Comment{network predicts the noise}
+        \State $\mathcal{L} = \lVert \hat{\epsilon}-\epsilon \rVert_2^2$ \Comment{$\epsilon$-prediction MSE loss}
     \EndFor
-    \State Update $\theta$ using the average batch loss.
+    \State $\theta \gets \theta - \eta\,\nabla_\theta \bar{\mathcal{L}}$ \Comment{update on the average batch loss}
 \Until{convergence}
 \end{algorithmic}
 \end{algorithm}
 
 \begin{algorithm}[H]
-\caption{Reverse Diffusion Sampling}
+\caption{Reverse Diffusion Sampling (deterministic, control-time)}
 \label{alg:diffusion_sampling}
 \begin{algorithmic}[1]
 \Require Trained network $\epsilon_\theta$, conditioning vector $c$
-\State Sample the pure-noise prior $x \sim \mathcal{N}(0,I)$
+\State $x \sim \mathcal{N}(0,I)$ \Comment{start from the pure-noise prior}
 \For{$t=T-1,T-2,\ldots,1$}
-    \State Predict noise
-    \[
-    \hat{\epsilon}
-    =
-    \epsilon_\theta(x,t,c)
-    \]
-    \State Take the posterior-mean step
-    \[
-    x
-    \leftarrow
-    \frac{1}{\sqrt{\alpha_t}}
-    \left(
-    x
-    -
-    \frac{\beta_t}{\sqrt{1-\bar{\alpha}_t}}
-    \hat{\epsilon}
-    \right)
-    \]
-    \If{$t>1$}
-        \State Inject ancestral noise, $\epsilon \sim \mathcal{N}(0,I)$
-        \[
-        x
-        \leftarrow
-        x
-        +
-        \sigma_t \epsilon,
-        \qquad
-        \sigma_t = \sqrt{\beta_t}
-        \]
-    \EndIf
+    \State $\hat{\epsilon} = \epsilon_\theta(x,t,c)$ \Comment{predict noise}
+    \State $x \gets \dfrac{1}{\sqrt{\alpha_t}}\!\left(x - \dfrac{\beta_t}{\sqrt{1-\bar{\alpha}_t}}\,\hat{\epsilon}\right)$ \Comment{posterior-mean (denoising) step}
+    \State {\color{gray}$x \gets x + \sigma_t\,\epsilon,\ \ \sigma_t=\sqrt{\beta_t}$} \Comment{ancestral noise --- \textbf{omitted} (deterministic)}
 \EndFor
-\State \Return $x$ (the denoised action chunk $\tilde{a}^{1:H}$)
+\State \Return $x$ \Comment{denoised action chunk $\tilde{a}^{1:H}$}
 \end{algorithmic}
 \end{algorithm}
+
+Note that at control time we use the \emph{deterministic} variant shown in
+Algorithm~\ref{alg:diffusion_sampling}: the ancestral-noise term $\sigma_t\epsilon$
+(greyed out above) is \emph{not} added, so each reverse step returns the
+posterior mean. Dropping it sharply lowers the action variance, which is essential
+when stabilizing the unstable upright equilibrium.
 
 \subsection{Generating Dataset}
 Both learning methods are trained by imitation, so they are only ever as good as
@@ -454,7 +417,7 @@ the closed loop stable rather than merely plausible:
 
 \subsection{Comparison}
 We evaluate both policies on the same double-pendulum swing-up task with the shared
-\file{evaluate\_methods.py} harness, reporting success rate (nominal and over $n=50$
+\file{evaluate\_methods.py} harness, reporting success rate (nominal and over $n=100$
 random initial conditions with observation noise $\sigma=0.025$), time-to-success,
 trajectory quality, stabilization accuracy, control smoothness, per-step inference
 cost, and robustness to increasing observation noise.
@@ -462,46 +425,47 @@ cost, and robustness to increasing observation noise.
 \subsubsection{Aggregate metrics}
 Figure~\ref{fig:metrics} collects the headline metrics. Both methods are essentially
 perfect at the task itself: behavioural cloning (BC) succeeds on all nominal and
-all $50$ random-init trials ($100\%$), and the diffusion policy matches it on the
-nominal case while losing only three random-init trials ($47/50 = 94\%$). The
+all $100$ random-init trials ($100\%$), and the diffusion policy matches it on the
+nominal case while losing ten random-init trials ($90/100 = 90\%$). The
 differences therefore live not in \emph{whether} the pendulum is swung up but in
 \emph{how}. The diffusion policy reaches the upright noticeably faster
-($5.09$~s vs.\ $7.53$~s) and with substantially higher and more consistent
-trajectory quality: its integrated absolute angle error (IAE) is less than half
-that of BC ($8.2$ vs.\ $18.2$~rad$\cdot$s) and its trial-to-trial spread is far
-tighter, whereas BC's large error bar shows it occasionally takes long, meandering
-swing-ups.
+($5.07$~s vs.\ $6.33$~s) and with substantially higher and more consistent
+trajectory quality: its integrated absolute angle error (IAE) is markedly lower
+than BC's ($8.98$ vs.\ $14.6$~rad$\cdot$s, a $\sim\!40\%$ reduction) and its
+trial-to-trial spread is far tighter (std $3.2$ vs.\ $7.7$~rad$\cdot$s), whereas
+BC's large error bar shows it occasionally takes long, meandering swing-ups.
 
-The trade-off appears once the pendulum is upright. BC holds the equilibrium more
-accurately (steady-state angle error $0.053$ vs.\ $0.075$~rad) and, most strikingly,
-does so an order of magnitude more smoothly: its mean torque increment
-($0.0025$~Nm/step) is roughly $10\times$ smaller than the diffusion policy's
-($0.0238$~Nm/step). Finally, the methods differ by more than an order of magnitude in
-compute: a single BC forward pass costs $\sim\!0.29$~ms, while one diffusion control
-step --- which requires the full iterative denoising chain --- costs $\sim\!6.6$~ms
+The trade-off appears once the pendulum is upright. The two settle to essentially the
+same steady-state angle error ($0.074$~rad for BC vs.\ $0.071$~rad for the diffusion
+policy), but BC holds that equilibrium far more smoothly: its mean torque increment
+($0.0033$~Nm/step) is roughly $8\times$ smaller than the diffusion policy's
+($0.0255$~Nm/step), and its positional jitter at the goal is about an order of
+magnitude lower. Finally, the methods differ by more than an order of magnitude in
+compute: a single BC forward pass costs $\sim\!0.27$~ms, while one diffusion control
+step --- which requires the full iterative denoising chain --- costs $\sim\!7.6$~ms
 (note the logarithmic axis).
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{plots_comp_bc_diffusion/metrics_comparison.png}
+  \includegraphics[width=\textwidth]{images/part1/plots_comp_bc_diffusion/metrics_comparison.png}
   \caption{Aggregate metrics: BC vs.\ diffusion policy.}
   \label{fig:metrics}
 \end{figure}
 
 \subsubsection{Robustness to observation noise}
 Figure~\ref{fig:robustness} sweeps observation noise (Gaussian, $\sigma$ on angles
-and $5\sigma$ on velocities) and reports the success rate at each level. Up to
-$\sigma=0.02$ both policies are unaffected and succeed every time. Beyond that they
-degrade, but BC degrades more gracefully: at $\sigma=0.03$ it still succeeds
-$100\%$ of the time while the diffusion policy has already dropped to $50\%$, and at
-$\sigma=0.04$ BC holds $50\%$ against the diffusion policy's $25\%$. At the most
-severe level ($\sigma=0.05$) both collapse to $0\%$. The diffusion policy's heavier
+and $5\sigma$ on velocities) and reports the success rate at each level. At low
+noise both are near-perfect, with BC holding $100\%$ all the way through
+$\sigma=0.03$ while the diffusion policy already slips slightly ($95\%$ at
+$\sigma=0.02$, $75\%$ at $\sigma=0.03$). Beyond that both degrade, but BC degrades
+more gracefully: at $\sigma=0.04$ BC still holds $45\%$ against the diffusion
+policy's $15\%$. At the most severe level ($\sigma=0.05$) both collapse to $0\%$. The diffusion policy's heavier
 reliance on a short observation \emph{history} (the $K=4$ state window) plausibly
 makes it more sensitive to corrupted inputs than BC's single-state map.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.72\textwidth]{plots_comp_bc_diffusion/robustness_vs_noise.png}
+  \includegraphics[width=0.72\textwidth]{images/part1/plots_comp_bc_diffusion/robustness_vs_noise.png}
   \caption{Robustness to observation noise.}
   \label{fig:robustness}
 \end{figure}
@@ -521,14 +485,14 @@ into a jittery torque.
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{plots_comp_bc_diffusion/example_states.png}
+  \includegraphics[width=\textwidth]{images/part1/plots_comp_bc_diffusion/example_states.png}
   \caption{Example state trajectories.}
   \label{fig:ex_states}
 \end{figure}
 
 \begin{figure}[H]
   \centering
-  \includegraphics[width=\textwidth]{plots_comp_bc_diffusion/example_controls.png}
+  \includegraphics[width=\textwidth]{images/part1/plots_comp_bc_diffusion/example_controls.png}
   \caption{Example control trajectories.}
   \label{fig:ex_controls}
 \end{figure}
@@ -539,12 +503,377 @@ cost/quality trade-off rather than one strictly dominating the other. The diffus
 policy plans better swing-ups --- faster and with markedly lower, more consistent
 trajectory error --- which is what one expects from a model that captures the
 multimodal, temporally correlated action distribution. Behavioural cloning, despite
-its simplicity, is the more practical controller for \emph{deployment}: it stabilizes
-more tightly, commands far smoother torques, is more robust to observation noise, and
-is over $20\times$ cheaper per control step. For an embedded, real-time
+its simplicity, is the more practical controller for \emph{deployment}: it holds the
+upright with far less jitter, commands far smoother torques, is more robust to
+observation noise, and is roughly $28\times$ cheaper per control step. For an embedded, real-time
 swing-up-and-balance controller BC is the pragmatic choice; the diffusion policy's
 advantages would matter more on tasks with genuinely multimodal expert behaviour,
 where a unimodal regressor like BC would average incompatible demonstrations
 together.
+
+\clearpage
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Robotic Manipulation: Cube Stacking}
+
+\subsection{Overview \& Control Task}
+This part of the work focuses on the control and manipulation problem in robotic systems using Imitation Learning. Two different approaches are implemented and compared: a baseline Behavior Cloning (BC) method and a Diffusion Policy method.
+The Franka Emika Panda robot, which is a 7DoF robot, was chosen as the control environment and is simulated in MuJoCo using the robosuite package \cite{robosuite2020}. The control tasks selected for this work are cube stacking, specifically:
+\begin{itemize}
+    \item Stack (2 cubes), where the goal is to place the red cube (Cube A) on top of the green cube (Cube B).
+    \item StackThree (3 cubes), a more complex task as it includes three cubes (Cube A, Cube B, Cube C) that must be placed in the correct order on top of each other.
+\end{itemize}
+
+Robot control is performed in task space using an Operational Space Controller (OSC\_POSE).
+The state space representation and the action space definition are described in detail below:
+
+\subsubsection{Action Space}
+The output of the policy is a 7-dimensional array containing the changes in end-effector movement and gripper state:
+\begin{itemize}
+    \item \textbf{Translation delta (3 values):} The relative changes of the end-effector position along the $x$, $y$, $z$ axes ($\Delta x, \Delta y, \Delta z$).
+    \item \textbf{Rotation delta (3 values):} The relative changes of the end-effector orientation in axis-angle representation.
+    \item \textbf{Gripper state (1 value):} A value in the interval $[-1, 1]$ that controls whether the gripper will be in an open or closed position.
+\end{itemize}
+
+\subsubsection{State Space}
+The state space $s_t$ contains the state of the robot and the positions of the objects in the scene. Two configurations are used depending on the dataset:
+\begin{enumerate}
+    \item \textbf{Stack (2 cubes - state dim = 32):}
+    The state vector consists of:
+    \begin{itemize}
+        \item The position and orientation of the two cubes (Cube A and Cube B) in space (14 values: 2 x (3D position + 4D quaternion)).
+        \item The relative distance and direction from the gripper to Cube A and Cube B (6 values: 2 x 3D vector).
+        \item The relative distance and direction between the two cubes (3 values: 3D vector).
+        \item The position and orientation of the end-effector (7 values: 3D position + 4D quaternion).
+        \item The current angular position of the gripper fingers (2 values).
+    \end{itemize}
+
+    \item \textbf{StackThree (3 cubes - state dim = 48):}
+    For the task with three cubes, the state space vector is extended to include information for Cube C (an additional 16 dimensions). Specifically, the following are added:
+    \begin{itemize}
+        \item The position and orientation of Cube C (7 values).
+        \item The relative distance from the gripper to Cube C (3 values).
+        \item The relative distances between Cube A-Cube C and Cube B-Cube C (6 values).
+    \end{itemize}
+\end{enumerate}
+
+\subsubsection{Training \& Horizon Control Goal}
+The objective is to learn a policy that generates a sequence of actions over a short horizon:
+\[ \pi(a_{t:t+H} \mid s_t) \]
+where the prediction horizon is defined as $H$ steps. In both models (BC baseline and Diffusion Policy), receding-horizon control is used, where at each time step $t$ the current state $s_t$ is received, a sequence of $H$ actions is generated, the actions are executed, and then the process is repeated by receiving a new state.
+
+\subsection{Dataset Overview}
+
+The data used to train the models comes from the MimicGen datasets, which are available on Hugging Face (\url{https://huggingface.co/datasets/amandlek/mimicgen_datasets}). The creation of these datasets is based on MimicGen \cite{mandlekar2023mimicgen}, a system that generates data using initial human demonstrations.
+MimicGen contains over 48,000 demos across 12 different tasks. Each dataset is saved in hdf5 file format and is compatible with the robomimic library.
+For each task, a default reset distribution $D_0$ is defined. Initially, a small number of human demonstrations, typically 10 demos from human experts, are collected on the $D_0$ distribution. MimicGen then uses this data to generate large datasets across different reset distributions of varying difficulty ($D_0, D_1, D_2$), for multiple tasks and robots.
+
+The datasets are divided into categories, the two most basic of which are:
+\begin{itemize}
+    \item \textbf{Source:} The initial data from expert human demonstrations (approximately 10 demonstrations per task).
+    \item \textbf{Core:} Data generated automatically via MimicGen alongside the initial source data.
+\end{itemize}
+
+For the implementation of this work, we selected the following four datasets from the core category:
+\begin{itemize}
+    \item stack\_d0
+    \item stack\_d1
+    \item stack\_three\_d0
+    \item stack\_three\_d1
+\end{itemize}
+
+Each of these datasets contains exactly 1000 demonstration trajectories. Part of these comes from the initial human expert demonstrations, and the rest were generated automatically using MimicGen, providing the volume of data required to train the Behavior Cloning and Diffusion Policy models.
+
+Table \ref{tab:datasets} presents a summary of all available observations and shapes per dataset, as obtained from the analysis of the hdf5 files used.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\caption{Summary of available observations and shapes per dataset (* indicates those used to construct the state vectors).}
+\label{tab:datasets}
+\begin{tabular}{|l|c|c|c|c|}
+\hline
+\textbf{Observation Key} & \textbf{stack\_d0} & \textbf{stack\_d1} & \textbf{stack\_three\_d0} & \textbf{stack\_three\_d1} \\ \hline
+\textbf{Total Trajectories} & 1000 & 1000 & 1000 & 1000 \\ \hline
+actions* & (102, 7) & (102, 7) & (251, 7) & (255, 7) \\ \hline
+agentview\_image & (102, 84, 84, 3) & (102, 84, 84, 3) & (251, 84, 84, 3) & (255, 84, 84, 3) \\ \hline
+object* & (102, 23) & (102, 23) & (251, 39) & (255, 39) \\ \hline
+robot0\_eef\_pos* & (102, 3) & (102, 3) & (251, 3) & (255, 3) \\ \hline
+robot0\_eef\_quat* & (102, 4) & (102, 4) & (251, 4) & (255, 4) \\ \hline
+robot0\_eef\_vel\_ang & (102, 3) & (102, 3) & (251, 3) & (255, 3) \\ \hline
+robot0\_eef\_vel\_lin & (102, 3) & (102, 3) & (251, 3) & (255, 3) \\ \hline
+robot0\_eye\_in\_hand\_image & (102, 84, 84, 3) & (102, 84, 84, 3) & (251, 84, 84, 3) & (255, 84, 84, 3) \\ \hline
+robot0\_gripper\_qpos* & (102, 2) & (102, 2) & (251, 2) & (255, 2) \\ \hline
+robot0\_gripper\_qvel & (102, 2) & (102, 2) & (251, 2) & (255, 2) \\ \hline
+robot0\_joint\_pos & (102, 7) & (102, 7) & (251, 7) & (255, 7) \\ \hline
+robot0\_joint\_pos\_cos & (102, 7) & (102, 7) & (251, 7) & (255, 7) \\ \hline
+robot0\_joint\_pos\_sin & (102, 7) & (102, 7) & (251, 7) & (255, 7) \\ \hline
+robot0\_joint\_vel & (102, 7) & (102, 7) & (251, 7) & (255, 7) \\ \hline
+\end{tabular}
+\end{table}
+
+The hdf5 files contain all of the above information (such as positions, velocities, and images); however, for the construction of the state vectors ($32$D for Stack and $48$D for StackThree), only the starred ($*$) variables were used.
+\pagebreak
+
+\subsection{Behavior Cloning Model}
+
+A Behavior Cloning architecture based on a Multi-Layer Perceptron (MLP) was used as a baseline model. The model is trained to map the state vector directly to an action sequence vector over a given horizon.
+
+\subsubsection{Model Architecture}
+The BC model is based on an architecture of 5 fully connected / linear layers with an increasing and then decreasing number of hidden neurons (from $256$ to $512$). Layer Normalization, ReLU activation functions, and Dropout with $p=0.1$ are used between the layers to prevent overfitting. The input to the network is the state vector (dimension $32$ or $48$), while the final output consists of $56$ values corresponding to the actions of the $8$ horizon steps for the $7$ dimensions of the action space.
+At the end of the forward pass, the output layer is reshaped from a flat 56-dimensional vector to a tensor with shape `(batch\_size, 8, 7)`.
+
+
+\subsubsection{Training \& Hyperparameters}
+An Adam optimizer and the Mean Squared Error (MSE Loss) function between predicted and ground truth expert actions are used for training the model:
+\[ \text{MSE Loss} = \frac{1}{B \cdot H \cdot A} \sum_{i=1}^{B} \sum_{t=1}^{H} \sum_{a=1}^{A} \left( \hat{a}_{t,a}^{(i)} - a_{t,a}^{(i)} \right)^2 \]
+where $B$ is the batch size, $H = 8$ is the action horizon, and $A = 7$ is the action dimension.
+
+The basic hyperparameters used for training are summarized in Table~\ref{tab:bc_hyperparams}.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Behavior Cloning training hyperparameters (cube stacking).}
+  \label{tab:bc_hyperparams}
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Value} \\
+    \midrule
+    Batch size    & $64$ \\
+    Learning rate & $10^{-3}$ \\
+    Epochs        & $50$ \\
+    Optimizer     & Adam \\
+    Loss          & MSE \\
+    Dataset split & $90\%$ train / $10\%$ validation \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+During training, the loss on the validation set is computed after each epoch. The model with the lowest validation loss is exported as the best checkpoint in `.pth` file format for use in environment testing.
+
+The training progress of the Behavior Cloning model is monitored by evaluating the Mean Squared Error (MSE) loss on both the training and validation sets at the end of each epoch. Figure~\ref{fig:bc_training_loss} illustrates the training and validation loss curves over the 50 training epochs.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.9\textwidth]{images/part2/bc_training_loss_stack_three_d0_stack_three_d1.png}
+  \caption{Training and validation Mean Squared Error (MSE) loss curves on a log scale for the Behavior Clone model.}
+  \label{fig:bc_training_loss}
+\end{figure}
+
+\section*{Diffusion Policy Model}
+
+The Diffusion Policy model formulates action generation as an iterative denoising process inspired by Denoising Diffusion Probabilistic Models (DDPM). Instead of directly regressing action trajectories as in Behavior Cloning, the model learns to predict the noise that was added to a clean action trajectory and iteratively removes it, starting from pure Gaussian noise and gradually recovering a plausible action sequence conditioned on the current robot state.
+
+\subsection*{1. Model Architecture}
+
+The denoiser network is a Transformer encoder (\texttt{TransformerDenoiser}) that processes the noisy action trajectory as a sequence of tokens and uses self-attention to model dependencies across the action horizon.
+
+\textbf{Input Tokenization.}
+The noisy action trajectory of shape $(B, H, A_d)$ is projected into a $d$-dimensional token sequence through a linear layer, yielding $H = 8$ action tokens. Learnable positional embeddings are added to encode the temporal ordering of the action steps within the horizon.
+
+\textbf{Timestep and State Conditioning.}
+The diffusion timestep is encoded using sinusoidal positional embeddings and projected through a two-layer MLP with SiLU activations to produce a $d$-dimensional timestep token. Similarly, the robot state vector (dimension 32 for Stack or 48 for StackThree) is projected through a two-layer MLP with SiLU activations into a state token. Both conditioning tokens are prepended to the action token sequence, forming a combined input sequence of length $H + 2 = 10$ tokens. This token-based conditioning approach allows the transformer's self-attention mechanism to naturally integrate temporal and state information with the action representations.
+
+\textbf{Transformer Encoder.}
+The token sequence is processed by a stack of 4 standard Transformer encoder layers. Each layer uses Pre-LayerNorm ordering and consists of:
+\begin{itemize}
+    \item Multi-head self-attention with $n_h = 4$ attention heads and model dimension $d = 256$
+    \item A feed-forward network with inner dimension $4d = 1024$ and GELU activations
+    \item Dropout with rate $p = 0.1$ applied in both the attention and feed-forward sub-layers
+    \item Residual connections around each sub-layer
+\end{itemize}
+
+\textbf{Output Projection.}
+After the transformer encoder, only the $H = 8$ action token positions are extracted (the timestep and state conditioning tokens are discarded). A final LayerNorm followed by a linear projection maps the $d$-dimensional representations back to the action dimension $A_d = 7$, producing the predicted noise tensor with the same shape as the input noisy trajectory.
+
+\textbf{Noise Schedule.}
+The forward and reverse diffusion processes are managed by a \texttt{DiffusionScheduler} that uses a linear variance schedule with $\beta$ values linearly spaced from $10^{-4}$ to $0.02$ across $K = 100$ timesteps. During training the timestep is normalized by the total number of timesteps ($t_{\text{norm}} = t / K$) before being passed to the sinusoidal embedding. The scheduler supports three reverse sampling strategies: stochastic DDPM, deterministic DDIM, and a probability flow ODE solver with optional Heun (second-order) integration.
+
+\subsection*{2. Training \& Hyperparameters}
+
+\textbf{Training Objective.}
+The model is trained with a noise prediction objective. At each training step, a random diffusion timestep $k$ is sampled uniformly from $\{1, \ldots, K-1\}$ and Gaussian noise $\epsilon$ is added to the clean (normalized) action trajectory $a_0$ according to the forward diffusion schedule. The network predicts the noise $\hat{\epsilon}_\theta(a_k, k, s_t)$ and is optimized by minimizing the Mean Squared Error between the predicted and actual noise:
+\[ \mathcal{L} = \mathbb{E}_{a_0, \epsilon, k} \left[ \left\| \epsilon - \hat{\epsilon}_\theta(a_k, k, s_t) \right\|^2 \right] \]
+
+\textbf{Training Hyperparameters.}
+The training configuration is summarized in Table~\ref{tab:diff_train_hyperparams}.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Diffusion Policy training hyperparameters (cube stacking).}
+  \label{tab:diff_train_hyperparams}
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Value} \\
+    \midrule
+    Batch size                & $1024$ \\
+    Learning rate             & $10^{-4}$ (cosine annealing, min $10^{-6}$) \\
+    Optimizer                 & AdamW (weight decay $10^{-4}$) \\
+    Epochs                    & $200$ \\
+    Diffusion timesteps ($K$) & $100$ \\
+    EMA decay                 & $0.995$ \\
+    Mixed-precision           & AMP with gradient scaling (GPU) \\
+    Dataset split             & $90\%$ train / $10\%$ validation \\
+    Action normalization      & element-wise min--max to $[-1,1]$ \\
+    Reproducibility           & fixed random seeds \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{Exponential Moving Average (EMA).}
+An Exponential Moving Average of the model weights is maintained throughout training with a decay factor of $0.995$. After each optimizer step the EMA weights are updated. The best checkpoint (lowest validation loss) is saved using the EMA weights for inference. EMA smooths out training noise and typically produces better inference results for diffusion models.
+
+\textbf{Inference Hyperparameters.}
+During deployment in the simulation environment, the inference-time parameters listed in Table~\ref{tab:diff_inference_hyperparams} are used.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Diffusion Policy inference hyperparameters (cube stacking).}
+  \label{tab:diff_inference_hyperparams}
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Value} \\
+    \midrule
+    Sampling method      & DDPM / DDIM / probability-flow ODE \\
+    Inference steps      & $50$ \\
+    Execution steps      & $8$ (receding horizon) \\
+    Action clipping      & $[-1,1]$ \\
+    Max.\ episode length & $500$ steps \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Testing Environment}
+
+The evaluation of the models is performed in the MuJoCo simulation environment using the robosuite library and the mimicgen package. For this purpose, the function \texttt{suite.make()} is used to create the environment with the following parameters:
+
+\begin{itemize}
+    \item \textbf{env\_name ("Stack" or "StackThree"):} Defines the task the robot will execute. In Stack, the goal is to stack 2 cubes, while in StackThree, the goal is to stack 3 cubes.
+    \item \textbf{robots ("Panda"):} Selection of the Franka Emika Panda robot (7 DoF).
+    \item \textbf{controller\_configs:} Selection of the Operational Space Controller (OSC\_POSE), which computes the control commands in task space based on end-effector position and orientation.
+    \item \textbf{has\_renderer (True) \& has\_offscreen\_renderer (False):} Enables the simulation window for visual monitoring of the robot and disables offscreen rendering to save resources.
+    \item \textbf{use\_camera\_obs (False):} Disables camera observations since this data was not used during training.
+    \item \textbf{control\_freq (20):} Control frequency set to 20 Hz, which corresponds to a cycle time of $50$ms per step and matches the sampling frequency of the datasets.
+    \item \textbf{horizon (500):} The maximum rollout steps per episode, limiting the simulation time to $25$ seconds ($500 \text{ steps} \times 0.05 \text{ s/step}$).
+\end{itemize}
+
+To extract the results, 100 independent evaluation episodes were executed for each model and environment. At each time step, the predicted actions are executed and it is checked whether cube stacking has been achieved (success state). The simulation setups for both tasks are shown in Figure~\ref{fig:stack_envs}.
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}{0.4\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_environment.png}
+    \caption{The two-cube stacking environment (Stack).}
+    \label{fig:stack_env}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.4\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_three_environment.png}
+    \caption{The three-cube stacking environment (StackThree).}
+    \label{fig:stack_three_env}
+  \end{subfigure}
+  \caption{The cube-stacking simulation environments used for evaluation.}
+  \label{fig:stack_envs}
+\end{figure}
+
+\pagebreak
+
+\subsection{Evaluation Results}
+
+To evaluate the quality and efficiency of the control trajectories generated by the models, we define three performance metrics that are computed at each planning step $k$ of a rollout episode. Let the model's action sequence prediction at planning step $k$ be:
+\[ A^{(k)} = \left[ a_1^{(k)}, a_2^{(k)}, \dots, a_{H_p}^{(k)} \right] \in \mathbb{R}^{H_p \times A_d} \]
+where $H_p = 8$ is the prediction horizon, $A_d = 7$ is the action space dimension, and $a_{t, j}^{(k)}$ represents the command at time step $t$ for action dimension $j$. The metrics are formulated as follows:
+
+\begin{enumerate}
+    \item \textbf{Trajectory Jitter ($J$):} Measures the smoothness of the predicted action trajectory by computing the mean squared difference between consecutive action steps:
+    \[ J^{(k)} = \frac{1}{(H_p - 1) A_d} \sum_{t=1}^{H_p-1} \sum_{j=1}^{A_d} \left( a_{t+1, j}^{(k)} - a_{t, j}^{(k)} \right)^2 \]
+    For an episode consisting of $N$ planning steps, the episode jitter is the average over all planning steps: $J_{\text{episode}} = \frac{1}{N} \sum_{k=1}^{N} J^{(k)}$.
+
+    \item \textbf{Path Effort ($E$):} Measures the total magnitude of spatial end-effector translation commands (the first 3 dimensions representing relative translation $x, y, z$):
+    \[ E^{(k)} = \sum_{t=1}^{H_p} \sum_{j=1}^{3} \left| a_{t, j}^{(k)} \right| \]
+    The total episode effort is the sum of step efforts: $E_{\text{episode}} = \sum_{k=1}^{N} E^{(k)}$.
+
+    \item \textbf{Joint Cost ($C$):} Measures the total command magnitude across all 7 action dimensions (representing both end-effector control and gripper command magnitude):
+    \[ C^{(k)} = \sum_{t=1}^{H_p} \sum_{j=1}^{A_d} \left| a_{t, j}^{(k)} \right| \]
+    The total episode joint cost is the sum of step joint costs: $C_{\text{episode}} = \sum_{k=1}^{N} C^{(k)}$.
+\end{enumerate}
+
+Following, we present the evaluation results of the trained models in the simulation environment. Table~\ref{tab:results} summarizes the performance metrics of both the Behavior Cloning (BC) baseline and the Diffusion Policy model across different execution horizons (\texttt{EXECUTE\_STEPS} $H \in \{1, 2, 4, 8\}$) for the Stack (2 cubes) and StackThree (3 cubes) tasks.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Empirical evaluation results of the Behavior Cloning (BC) and Diffusion Policy models across different execution steps ($H$) on the Stack and StackThree environments (values reported as Mean / Median).}
+\label{tab:results}
+\begin{tabular}{|l|l|c|c|c|c|c|}
+\hline
+\textbf{Task} & \textbf{Model} & \textbf{$H$} & \textbf{Success} & \textbf{Jitter} & \textbf{Path Effort} & \textbf{Joint Cost} \\ \hline
+Stack & BC & 1 & 13.0\% & 0.01170 / 0.01029 & 2073.22 / 2031.59 & 5515.72 / 5547.95 \\ \cline{3-7}
+ &  & 2 & 11.0\% & 0.01691 / 0.01577 & 934.09 / 908.48 & 2714.83 / 2768.91 \\ \cline{3-7}
+ &  & 4 & 73.0\% & 0.01165 / 0.01099 & 269.30 / 171.67 & 765.77 / 484.45 \\ \cline{3-7}
+ &  & 8 & \textbf{93.0\%} & \textbf{0.00676 / 0.00623} & \textbf{103.05 / 82.74} & \textbf{268.03 / 218.65} \\ \cline{2-7}
+ & Diffusion & 1 & 4.0\% & 0.06578 / 0.06904 & 1605.12 / 1457.15 & 7304.82 / 7175.33 \\ \cline{3-7}
+ &  & 2 & \textbf{98.0\%} & 0.02817 / 0.02687 & 431.17 / 337.34 & 1270.82 / 1052.46 \\ \cline{3-7}
+ &  & 4 & 96.0\% & 0.02625 / 0.02446 & 196.55 / 173.60 & 591.81 / 517.00 \\ \cline{3-7}
+ &  & 8 & \textbf{98.0\%} & \textbf{0.02361 / 0.02290} & \textbf{93.93 / 88.48} & \textbf{278.56 / 260.22} \\ \hline
+StackThree & BC & 1 & 2.0\% & 0.00468 / 0.00438 & 2131.12 / 2143.83 & 6189.94 / 6207.12 \\ \cline{3-7}
+ &  & 2 & 1.0\% & 0.00514 / 0.00529 & 1052.04 / 998.69 & 3104.60 / 3068.19 \\ \cline{3-7}
+ &  & 4 & 25.0\% & 0.00539 / 0.00512 & 462.80 / 438.15 & 1389.38 / 1398.30 \\ \cline{3-7}
+ &  & 8 & \textbf{56.0\%} & \textbf{0.00366 / 0.00374} & \textbf{232.03 / 202.94} & \textbf{652.26 / 579.43} \\ \cline{2-7}
+ & Diffusion & 1 & 8.0\% & 0.04743 / 0.04760 & 2017.02 / 1977.88 & 7646.84 / 7767.36 \\ \cline{3-7}
+ &  & 2 & 62.0\% & 0.03880 / 0.04074 & 975.31 / 949.27 & 3382.48 / 3370.43 \\ \cline{3-7}
+ &  & 4 & 66.0\% & 0.02874 / 0.02942 & 511.65 / 424.82 & 1584.73 / 1353.55 \\ \cline{3-7}
+ &  & 8 & \textbf{74.0\%} & \textbf{0.02595 / 0.02631} & \textbf{240.11 / 212.66} & \textbf{743.77 / 642.23} \\ \hline
+\end{tabular}
+\end{table}
+
+Both models benefit from longer execution horizons, with $H=8$ consistently yielding the highest success rates and lowest effort scores. However, the Diffusion Policy demonstrates a clear advantage in task success: on Stack it achieves $98.0\%$ at $H=2$ and maintains this level through $H=8$, whereas BC requires the full horizon ($H=8$) to reach $93.0\%$. On the more challenging StackThree task, the diffusion model reaches $74.0\%$ at $H=8$ compared to BC's $56.0\%$, and already attains $62.0\%$ at $H=2$ where BC succeeds only $1.0\%$ of the time. This robustness to replanning frequency is a practical advantage, as the policy can adapt more quickly to environmental changes without sacrificing reliability. In terms of trajectory quality, BC produces smoother action sequences with lower jitter values across all configurations (e.g.\ $0.00676$ vs.\ $0.02361$ at $H=8$ on Stack), which is expected given its deterministic regression nature compared to the stochastic denoising process. Despite this, the diffusion model's higher jitter does not impair task completion, as confirmed by its superior success rates. Path effort and joint cost are comparable between the two models at $H=8$, with the diffusion model achieving slightly lower path effort on Stack ($93.93$ vs.\ $103.05$) while showing marginally higher joint cost on StackThree ($743.77$ vs.\ $652.26$), likely due to additional corrective movements needed to complete the more complex three-cube stacking sequence. At low execution horizons ($H=1$), both models struggle: BC suffers from compounding errors and inability to properly trigger gripper state changes, while the diffusion model produces excessively noisy trajectories with high jitter and effort, indicating that single-step execution disrupts the temporal coherence of the generated action plans. These trends are visualized in Figure~\ref{fig:stack_metrics}, which plots each metric against the execution horizon $H$ for the Stack task.
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_figures/stack_success_comparison.png}
+    \caption{Success rate.}
+    \label{fig:stack_success}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_figures/stack_jitter_comparison.png}
+    \caption{Trajectory jitter.}
+    \label{fig:stack_jitter}
+  \end{subfigure}
+
+  \vspace{0.6em}
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_figures/stack_effort_comparison.png}
+    \caption{Path effort.}
+    \label{fig:stack_effort}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_figures/stack_joint_cost_comparison.png}
+    \caption{Joint cost.}
+    \label{fig:stack_joint_cost}
+  \end{subfigure}
+  \caption{Behavior Cloning vs.\ Diffusion Policy on the Stack task across execution horizons $H \in \{1, 2, 4, 8\}$, for each of the four evaluation metrics.}
+  \label{fig:stack_metrics}
+\end{figure}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Conclusion \& Future Work}
+
+
+\clearpage
+\begin{thebibliography}{9}
+\bibitem{mandlekar2023mimicgen}
+A. Mandlekar, S. Nasiriany, B. Wen, I. Akinola, Y. Narang, L. Fan, Y. Zhu, and D. Fox, ``MimicGen: A Data Generation System for Scalable Robot Learning using Human Demonstrations,'' in \emph{7th Annual Conference on Robot Learning}, 2023.
+
+\bibitem{robosuite2020}
+Y. Zhu, J. Wong, A. Mandlekar, R. Mart\'{i}n-Mart\'{i}n, A. Joshi, K. Lin, A. Maddukuri, S. Nasiriany, and Y. Zhu, ``robosuite: A Modular Simulation Framework and Benchmark for Robot Learning,'' in \emph{arXiv preprint arXiv:2009.12293}, 2020.
+\end{thebibliography}
 
 \end{document}

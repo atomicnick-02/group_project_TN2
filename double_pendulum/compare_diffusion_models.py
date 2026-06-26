@@ -127,6 +127,23 @@ def short_label(meta, n_exec, multi_nexec):
     return "_".join(str(p) for p in parts)
 
 
+def arch_desc(meta):
+    """One-line human description of a checkpoint's network architecture, for titles."""
+    nk = meta.get("net_kwargs", {}) or {}
+    arch = meta.get("arch", "?")
+    T = meta.get("timesteps", "?")
+    H = nk.get("horizon", meta.get("horizon", "?"))
+    if arch == "transformer":
+        return (f"Transformer  ·  {nk.get('n_layers', '?')} layers, "
+                f"d_model={nk.get('d_model', '?')}, "
+                f"ff={nk.get('dim_feedforward', '?')}  ·  "
+                f"T={T} denoising steps, horizon={H}")
+    if arch == "mlp":
+        return (f"MLP  ·  hidden={nk.get('hidden_dim', '?')}  ·  "
+                f"T={T} denoising steps, horizon={H}")
+    return f"{arch}  ·  T={T} denoising steps, horizon={H}"
+
+
 # ── Controller construction (mirrors evaluate_methods.build_controller) ──────
 def build_diffusion(ckpt_path, stats_path, device, n_exec, compile_diff):
     """Build a DiffusionController in EVAL mode, honoring a forced device."""
@@ -216,13 +233,16 @@ def build_summary(df, meta_by_label):
 
 
 # ── Plots ────────────────────────────────────────────────────────────────────
-def _bars(ax, labels, vals, errs, title, ylabel, log=False):
+def _bars(ax, labels, vals, errs, title, ylabel, xlabel=None, rotation=30, log=False):
     xs = np.arange(len(labels))
     colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(labels)))
     ax.bar(xs, vals, yerr=errs, capsize=4, color=colors, alpha=0.9)
     ax.set_xticks(xs)
-    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+    ha = "right" if rotation else "center"
+    ax.set_xticklabels(labels, rotation=rotation, ha=ha, fontsize=9)
     ax.set_title(title); ax.set_ylabel(ylabel)
+    if xlabel:
+        ax.set_xlabel(xlabel)
     if log:
         ax.set_yscale("log")
     ax.grid(True, axis="y", alpha=0.3)
@@ -231,25 +251,52 @@ def _bars(ax, labels, vals, errs, title, ylabel, log=False):
             ax.annotate(f"{v:.3g}", (x, v), ha="center", va="bottom", fontsize=7)
 
 
-def make_plots(df, summary, plots_dir):
+def make_plots(df, summary, plots_dir, meta_by_label):
     plots_dir.mkdir(parents=True, exist_ok=True)
     labels = summary["model"].tolist()
+    n_trials = int(summary["n_nominal_trials"].max()) if len(summary) else 0
+
+    # When every bar is the SAME checkpoint and only the receding-horizon replan
+    # rate (n_exec = number of executed actions per plan) varies, the comparison
+    # IS an n_exec sweep: label the x-axis by n_exec and name the shared network
+    # architecture in the figure title instead of repeating it on every bar.
+    metas = [meta_by_label.get(l, {}) for l in labels]
+    single_arch = bool(metas) and len({m.get("_ckpt") for m in metas}) == 1
+    if single_arch:
+        xlabels = [str(int(n)) if pd.notna(n) else "?" for n in summary["n_exec"]]
+        x_axis = "Executed actions per re-plan  (n_exec)"
+        rot = 0
+        arch_line = arch_desc(metas[0])
+    else:
+        xlabels = labels
+        x_axis = None
+        rot = 30
+        arch_line = "multiple architectures"
 
     # 1) headline metric bars across all models
     fig, axs = plt.subplots(2, 3, figsize=(17, 9))
-    _bars(axs[0, 0], labels, summary["success_rate"], None,
-          "Success rate (nominal)\n(higher = better)", "fraction")
-    _bars(axs[0, 1], labels, summary["time_to_success_s_mean"], None,
-          "Time to success\n(lower = better)", "seconds")
-    _bars(axs[0, 2], labels, summary["iae_angle_mean"], summary["iae_angle_std"],
-          "Trajectory quality: IAE angle\n(lower = better)", "rad·s")
-    _bars(axs[1, 0], labels, summary["ss_angle_err_mean"], None,
-          "Stability: steady-state angle err\n(lower = better)", "rad")
-    _bars(axs[1, 1], labels, summary["mean_abs_du_mean"], None,
-          "Smoothness: mean |Δu|\n(lower = smoother)", "Nm/step")
-    _bars(axs[1, 2], labels, summary["infer_ms_mean"], summary["infer_ms_std"],
-          "Inference cost / control step", "ms (log)", log=True)
-    fig.suptitle("Diffusion-policy hyperparameter comparison — swing-up", fontsize=15)
+    _bars(axs[0, 0], xlabels, summary["success_rate"], None,
+          "Success rate (nominal)\n(higher = better)",
+          "Success rate  (fraction of trials)", x_axis, rot)
+    _bars(axs[0, 1], xlabels, summary["time_to_success_s_mean"], None,
+          "Time to success\n(lower = better)",
+          "Time to upright  (s)", x_axis, rot)
+    _bars(axs[0, 2], xlabels, summary["iae_angle_mean"], summary["iae_angle_std"],
+          "Trajectory quality: IAE angle\n(lower = better)",
+          "Integrated absolute angle error  (rad·s)", x_axis, rot)
+    _bars(axs[1, 0], xlabels, summary["ss_angle_err_mean"], None,
+          "Stability: steady-state angle err\n(lower = better)",
+          "Steady-state angle error  (rad)", x_axis, rot)
+    _bars(axs[1, 1], xlabels, summary["mean_abs_du_mean"], None,
+          "Smoothness: mean |Δu|\n(lower = smoother)",
+          "Mean torque change |Δu|  (N·m / step)", x_axis, rot)
+    _bars(axs[1, 2], xlabels, summary["infer_ms_mean"], summary["infer_ms_std"],
+          "Inference cost / control step",
+          "Inference time per step  (ms, log scale)", x_axis, rot, log=True)
+    title = f"Diffusion-policy swing-up — {arch_line}"
+    if n_trials:
+        title += f"\n({n_trials} trials per n_exec)"
+    fig.suptitle(title, fontsize=14)
     fig.tight_layout()
     fig.savefig(plots_dir / "metrics_comparison.png", dpi=130)
     plt.close(fig)
@@ -258,14 +305,16 @@ def make_plots(df, summary, plots_dir):
     rob = (df.groupby(["model", "noise_sigma"])["success"].mean()
            .reset_index().rename(columns={"success": "success_rate"}))
     fig, ax = plt.subplots(figsize=(9, 5.5))
-    for label in labels:
+    for label, meta in zip(labels, metas):
         sub = rob[rob["model"] == label].sort_values("noise_sigma")
-        ax.plot(sub["noise_sigma"], sub["success_rate"], "o-", lw=2, ms=6, label=label)
-    ax.set_xlabel("observation-noise sigma (rad on angles, ×%g on velocities)" % VEL_NOISE_FACTOR)
-    ax.set_ylabel("success rate")
-    ax.set_title("Robustness to observation noise")
+        leg = (f"n_exec={int(meta['_n_exec'])}"
+               if single_arch and meta.get("_n_exec") is not None else label)
+        ax.plot(sub["noise_sigma"], sub["success_rate"], "o-", lw=2, ms=6, label=leg)
+    ax.set_xlabel("Observation-noise sigma  (rad on angles, ×%g on velocities)" % VEL_NOISE_FACTOR)
+    ax.set_ylabel("Success rate  (fraction of trials)")
+    ax.set_title(f"Robustness to observation noise\n{arch_line}", fontsize=10)
     ax.set_ylim(-0.05, 1.05); ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8, ncol=2)
+    ax.legend(fontsize=8, ncol=2, title="n_exec" if single_arch else None)
     fig.tight_layout()
     fig.savefig(plots_dir / "robustness_vs_noise.png", dpi=130)
     plt.close(fig)
@@ -285,17 +334,25 @@ def make_sweep_plot(summary, plots_dir, sweep_key):
     if sweep_key not in summary or summary[sweep_key].nunique(dropna=True) < 2:
         return None
 
+    xlabels = {
+        "n_exec": "Executed actions per re-plan  (n_exec)",
+        "timesteps": "Denoising steps  (T)",
+        "horizon": "Action horizon  (steps)",
+        "learning_rate": "Learning rate",
+        "n_params": "Parameters",
+    }
     sub = summary.dropna(subset=[sweep_key]).sort_values(sweep_key)
     fig, ax1 = plt.subplots(figsize=(8, 5))
     ax1.plot(sub[sweep_key], sub["success_rate"], "o-", color="tab:green",
              lw=2, ms=7, label="success rate")
-    ax1.set_xlabel(sweep_key); ax1.set_ylabel("success rate", color="tab:green")
+    ax1.set_xlabel(xlabels.get(sweep_key, sweep_key))
+    ax1.set_ylabel("Success rate  (fraction of trials)", color="tab:green")
     ax1.set_ylim(-0.05, 1.05); ax1.grid(True, alpha=0.3)
     ax2 = ax1.twinx()
     ax2.plot(sub[sweep_key], sub["iae_angle_mean"], "s--", color="tab:red",
              lw=2, ms=6, label="IAE angle")
-    ax2.set_ylabel("IAE angle (rad·s)", color="tab:red")
-    fig.suptitle(f"Diffusion swing-up vs {sweep_key}")
+    ax2.set_ylabel("Integrated absolute angle error  (rad·s)", color="tab:red")
+    fig.suptitle(f"Diffusion swing-up vs {xlabels.get(sweep_key, sweep_key)}")
     fig.tight_layout()
     out = plots_dir / f"sweep_{sweep_key}.png"
     fig.savefig(out, dpi=130)
@@ -317,8 +374,9 @@ def main():
                    help="force one norm-stats JSON for ALL checkpoints (default: "
                         "each checkpoint's <ckpt>_stats.json sidecar, else shared)")
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
-    p.add_argument("--n-nominal", type=int, default=8,
-                   help="trials at noise=0 (success rate & per-metric stats)")
+    p.add_argument("--n-nominal", type=int, default=50,
+                   help="trials at noise=0 per model/n_exec (success rate & "
+                        "per-metric stats; 50 for statistical significance)")
     p.add_argument("--n-robust", type=int, default=4,
                    help="trials per non-zero noise level")
     p.add_argument("--noise-levels", type=float, nargs="+",
@@ -424,7 +482,7 @@ def main():
     summary = build_summary(df, meta_by_label)
     summary.to_csv(out_root / "summary.csv", index=False)
 
-    rob = make_plots(df, summary, plots_dir)
+    rob = make_plots(df, summary, plots_dir, meta_by_label)
     rob.to_csv(out_root / "robustness_success_rate.csv", index=False)
     sweep_png = make_sweep_plot(summary, plots_dir, args.sweep_key)
 

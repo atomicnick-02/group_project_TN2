@@ -2,10 +2,10 @@
 \contentsline {subsection}{\numberline {1.1}Behavioural Cloning}{3}{subsection.1.1}%
 \contentsline {subsection}{\numberline {1.2}Diffusion}{3}{subsection.1.2}%
 \contentsline {subsection}{\numberline {1.3}Generating Dataset}{4}{subsection.1.3}%
-\contentsline {subsubsection}{\numberline {1.3.1}Dynamics Model}{5}{subsubsection.1.3.1}%
+\contentsline {subsubsection}{\numberline {1.3.1}Dynamics Model}{4}{subsubsection.1.3.1}%
 \contentsline {subsubsection}{\numberline {1.3.2}Trajectory Optimization}{5}{subsubsection.1.3.2}%
 \contentsline {subsubsection}{\numberline {1.3.3}TVLQR Tracking and Closed-Loop Rollout}{5}{subsubsection.1.3.3}%
-\contentsline {subsubsection}{\numberline {1.3.4}DAgger-Style Coverage}{6}{subsubsection.1.3.4}%
+\contentsline {subsubsection}{\numberline {1.3.4}DAgger-Style Coverage}{5}{subsubsection.1.3.4}%
 \contentsline {subsubsection}{\numberline {1.3.5}Dataset Composition}{6}{subsubsection.1.3.5}%
 \contentsline {subsection}{\numberline {1.4}Diffusion Policy Model}{7}{subsection.1.4}%
 \contentsline {subsubsection}{\numberline {1.4.1}Conditioning and Action Representation}{7}{subsubsection.1.4.1}%
@@ -20,3 +20,15 @@
 \contentsline {subsubsection}{\numberline {1.5.2}Robustness to observation noise}{10}{subsubsection.1.5.2}%
 \contentsline {subsubsection}{\numberline {1.5.3}Example trajectories}{11}{subsubsection.1.5.3}%
 \contentsline {subsubsection}{\numberline {1.5.4}Summary}{11}{subsubsection.1.5.4}%
+\contentsline {section}{\numberline {2}Robotic Manipulation: Cube Stacking}{13}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Overview \& Control Task}{13}{subsection.2.1}%
+\contentsline {subsubsection}{\numberline {2.1.1}Action Space}{13}{subsubsection.2.1.1}%
+\contentsline {subsubsection}{\numberline {2.1.2}State Space}{13}{subsubsection.2.1.2}%
+\contentsline {subsubsection}{\numberline {2.1.3}Training \& Horizon Control Goal}{14}{subsubsection.2.1.3}%
+\contentsline {subsection}{\numberline {2.2}Dataset Overview}{14}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Behavior Cloning Model}{15}{subsection.2.3}%
+\contentsline {subsubsection}{\numberline {2.3.1}Model Architecture}{15}{subsubsection.2.3.1}%
+\contentsline {subsubsection}{\numberline {2.3.2}Training \& Hyperparameters}{15}{subsubsection.2.3.2}%
+\contentsline {subsection}{\numberline {2.4}Testing Environment}{18}{subsection.2.4}%
+\contentsline {subsection}{\numberline {2.5}Evaluation Results}{20}{subsection.2.5}%
+\contentsline {section}{\numberline {3}Conclusion \& Future Work}{22}{section.3}%
