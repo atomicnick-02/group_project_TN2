@@ -59,7 +59,7 @@ USE_GOAL     = True          # append goal features to conditioning vector
 X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)  # upright
 
 TIMESTEPS    = 20
-EPOCHS       = 200
+EPOCHS       = 400
 BATCH_SIZE   = 256
 LR           = 1e-4
 SEED         = 42
@@ -333,6 +333,29 @@ def build_checkpoint(policy, arch, net_kwargs, cond_dim):
     }
 
 
+def build_summary(arch, epochs, train_keys, val_keys, test_keys, history,
+                  test_loss=float("nan")):
+    """Run-summary dict (config + latest losses).
+
+    Rebuilt from `history` so it can be written at the start of training (empty
+    history -> null losses), refreshed at every checkpoint, and finalized at the
+    end. `epochs_completed` makes a crashed run's partial record self-explaining.
+    """
+    final_val = next((vl for _, _, vl in reversed(history) if not np.isnan(vl)),
+                     float("nan"))
+    _nan2none = lambda x: None if (isinstance(x, float) and np.isnan(x)) else x
+    return {
+        "arch": arch, "epochs": epochs, "seed": SEED,
+        "split_ratios": list(SPLIT_RATIOS),
+        "n_train_traj": len(train_keys), "n_val_traj": len(val_keys),
+        "n_test_traj": len(test_keys),
+        "epochs_completed": history[-1][0] if history else 0,
+        "final_train_loss": _nan2none(history[-1][1] if history else float("nan")),
+        "final_val_loss":   _nan2none(final_val),
+        "test_loss":        _nan2none(test_loss),
+    }
+
+
 # ── Warm-start ───────────────────────────────────────────────────────────────
 def find_last_checkpoint(arch=None):
     """Path to the most recently modified diffusion checkpoint, or None.
@@ -460,6 +483,20 @@ def main():
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True,
                         num_workers=2, drop_last=True, pin_memory=(DEVICE == "cuda"))
 
+    # Run-summary JSON: written NOW (so even a crashed run leaves a record of the
+    # config + split) and refreshed at every checkpoint and at the end with the
+    # latest losses. `history` is the single source it's rebuilt from.
+    Path(LOSS_DIR).mkdir(parents=True, exist_ok=True)
+    summary_path = Path(LOSS_DIR) / f"summary_{args.arch}.json"
+    history = []   # rows of [epoch, train_loss, val_loss]
+    def write_summary(test_loss=float("nan")):
+        s = build_summary(args.arch, args.epochs, train_keys, val_keys,
+                          test_keys, history, test_loss)
+        with open(summary_path, "w") as fp:
+            json.dump(s, fp, indent=2)
+        return s
+    write_summary()
+
     scheduler = Scheduler(num_steps=TIMESTEPS, device=DEVICE)
     network, net_kwargs = build_network(args.arch, dataset.cond_dim, horizon=H)
 
@@ -492,7 +529,6 @@ def main():
 
     # Per-epoch bookkeeping: record (epoch, train_loss, val_loss) for the curve,
     # display the val loss live, and drop periodic checkpoints by the final one.
-    history = []   # rows of [epoch, train_loss, val_loss]
     def on_epoch_end(epoch, avg_loss):
         vloss = float("nan")
         if (val_loader is not None and args.val_every > 0 and
@@ -504,6 +540,7 @@ def main():
         if args.save_every > 0 and epoch % args.save_every == 0 and epoch < args.epochs:
             path = ckpt.with_name(f"{ckpt.stem}_epoch{epoch:03d}{ckpt.suffix}")
             torch.save(build_checkpoint(policy, args.arch, net_kwargs, dataset.cond_dim), path)
+            write_summary()   # keep the run summary current with each checkpoint
             print(f"  [checkpoint] saved {path}")
 
     policy.train(loader, epochs=args.epochs, on_epoch_end=on_epoch_end)
@@ -514,8 +551,7 @@ def main():
         test_loss = validation_loss(policy, test_loader, scheduler, TIMESTEPS)
         print(f"Test loss (EMA, noise-pred MSE): {test_loss:.5f}")
 
-    # ── Persist loss curves + a run summary to the dedicated losses folder ──
-    Path(LOSS_DIR).mkdir(parents=True, exist_ok=True)
+    # ── Persist loss curves + finalize the run summary in the losses folder ──
     curve_path = Path(LOSS_DIR) / f"loss_history_{args.arch}.csv"
     with open(curve_path, "w", newline="") as fp:
         w = csv.writer(fp)
@@ -523,21 +559,8 @@ def main():
         for ep, tr, vl in history:
             w.writerow([ep, f"{tr:.6f}", "" if np.isnan(vl) else f"{vl:.6f}"])
 
-    final_val = next((vl for _, _, vl in reversed(history) if not np.isnan(vl)),
-                     float("nan"))
-    _nan2none = lambda x: None if (isinstance(x, float) and np.isnan(x)) else x
-    summary = {
-        "arch": args.arch, "epochs": args.epochs, "seed": SEED,
-        "split_ratios": list(SPLIT_RATIOS),
-        "n_train_traj": len(train_keys), "n_val_traj": len(val_keys),
-        "n_test_traj": len(test_keys),
-        "final_train_loss": _nan2none(history[-1][1] if history else float("nan")),
-        "final_val_loss":   _nan2none(final_val),
-        "test_loss":        _nan2none(test_loss),
-    }
-    summary_path = Path(LOSS_DIR) / f"summary_{args.arch}.json"
-    with open(summary_path, "w") as fp:
-        json.dump(summary, fp, indent=2)
+    # Final refresh of summary_path, now including the held-out test loss.
+    summary = write_summary(test_loss)
     print(f"Saved loss curve to {curve_path} and summary to {summary_path}")
 
     # Final SELF-DESCRIBING checkpoint (EMA weights -> smoother inference
@@ -571,9 +594,9 @@ def main():
         "n_test_traj": len(test_keys),
         "n_params": int(sum(p.numel() for p in network.parameters())),
         "warmstart": warmstart_used,
-        "final_train_loss": _nan2none(history[-1][1] if history else float("nan")),
-        "final_val_loss":   _nan2none(final_val),
-        "test_loss":        _nan2none(test_loss),
+        "final_train_loss": summary["final_train_loss"],
+        "final_val_loss":   summary["final_val_loss"],
+        "test_loss":        summary["test_loss"],
         "checkpoint": str(ckpt),
         "device": DEVICE,
     }

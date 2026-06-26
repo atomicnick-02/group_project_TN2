@@ -1,0 +1,10 @@
+{
+  "traj": "traj_347",
+  "t_index": 100,
+  "traj_len": 200,
+  "stochastic": false,
+  "horizon": 10,
+  "timesteps": 20,
+  "reconstruction_mse_normalized": 4.9565232984605245e-06,
+  "denorm_units": false
+}

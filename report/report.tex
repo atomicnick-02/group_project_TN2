@@ -68,7 +68,7 @@ in the \textbf{double pendulum swingup task} and the \textbf{stacking problem}.
 
 \subsection{Behavioural Cloning}
 
-\subsection{Diffusion}
+\subsection{Diffusion}\label{subsec:diffusion}
 In order to understand the diffusion policy approach, we first need to understand
 the concept of diffusion models. Diffusion models are a class of generative models
 that learn to generate structured data (in our case, action sequences) 
@@ -98,5 +98,259 @@ The reverse diffusion process is defined as follows:
   x_0 = \frac{1}{\sqrt{\bar{\alpha}_t}} \cdot x_t - \frac{\sqrt{1 - \bar{\alpha}_t}}{\sqrt{\bar{\alpha}_t}} \cdot \epsilon_\theta(x_t, t), \quad \epsilon_\theta(x_t, t) \sim \mathcal{N}(0, I)  
 \end{equation}
 
+\subsection{Generating Dataset}
+Both learning methods are trained by imitation, so they are only ever as good as
+the expert demonstrations they are shown. We therefore generate the dataset with a
+classical optimal-control pipeline: we (i) define a physics model of the double
+pendulum, (ii) solve a trajectory-optimization problem for a nominal swing-up,
+(iii) wrap that nominal in a time-varying LQR (TVLQR) feedback controller, and
+(iv) roll the controller out \emph{inside the simulator} to harvest dynamically
+consistent state--action pairs. The result is a set of expert trajectories that
+both the behavioural-cloning and diffusion-policy models clone.
+
+\subsubsection{Dynamics Model}
+The state is $x = [q_1, q_2, \dot{q}_1, \dot{q}_2]^\top$, where $q_1$ is the
+shoulder and $q_2$ the elbow angle, and the control $u = [u_1, u_2]^\top$ collects
+the two joint torques. We use $q_1 = 0$ for the stable hanging-down configuration
+and $q_1 = \pi$ for the upright goal. The planar two-link equations of motion are
+\begin{equation}
+  M(q)\,\ddot{q} = u + G(q) - C(q,\dot{q})\,\dot{q} - b\,\dot{q}
+                   - f\,\tanh\!\left(\dot{q}/\epsilon\right),
+\end{equation}
+with mass matrix $M(q)$, Coriolis/centrifugal matrix $C(q,\dot{q})$, gravity
+vector $G(q)$, viscous damping $b$ and Coulomb friction $f$. The non-smooth dry
+friction $\operatorname{sign}(\dot{q})$ is replaced by a smooth
+$\tanh(\dot{q}/\epsilon)$ ($\epsilon = 0.05$ rad/s) so the term is differentiable
+for the gradient-based solver. Crucially, every physical parameter (masses,
+lengths, link inertias, damping and friction) is read \emph{directly} from the
+MuJoCo model file \file{dp.xml}, so the planner and the simulator used for
+deployment describe the exact same system and cannot silently drift apart.
+
+\subsubsection{Trajectory Optimization}
+The nominal swing-up is found by direct trapezoidal collocation, transcribed into a
+nonlinear program (NLP) and solved with IPOPT. Discretizing the horizon into
+$N+1$ knots, the decision vector stacks every state and control,
+$z = [x_0, \ldots, x_N, u_0, \ldots, u_N]$, and we minimize the quadratic cost
+\begin{equation}
+  J(z) = \tfrac{1}{2}\sum_{k=0}^{N-1}
+         \Big[(x_k - x_g)^\top Q\,(x_k - x_g) + u_k^\top R\,u_k\Big]
+       + (x_N - x_g)^\top Q_f\,(x_N - x_g),
+\end{equation}
+subject to the trapezoidal collocation (dynamics) defects, the boundary
+conditions, and the actuator torque limits:
+\begin{align}
+  x_{k+1} - x_k - \tfrac{\Delta t}{2}\big(f(x_k,u_k) + f(x_{k+1},u_{k+1})\big) &= 0,
+    \quad k = 0,\ldots,N-1, \\
+  x_0 = x_{\text{init}}, \quad x_N &= x_g = [\pi, 0, 0, 0]^\top, \\
+  |u_k| &\le \tau_{\max}.
+\end{align}
+The objective gradient and the constraint Jacobian are obtained by automatic
+differentiation (JAX), and the problem is compiled once and reused across solves.
+The weighting matrices $Q, R$ trade off tracking accuracy against control effort;
+sweeping them, together with the peak-torque limit and the initial condition,
+produces a diverse family of nominal swing-ups rather than a single trajectory.
+
+\subsubsection{TVLQR Tracking and Closed-Loop Rollout}
+A nominal trajectory $(x^\ast, u^\ast)$ on its own is open-loop and brittle: applied
+verbatim, the smallest model mismatch or numerical drift sends this chaotic system
+off course. We therefore linearize the dynamics about the nominal and compute
+time-varying LQR feedback gains $K_t$, yielding the tracking law
+\begin{equation}
+  u_t = u^\ast_t - K_t\,(x_t - x^\ast_t).
+\end{equation}
+A nearest-neighbour rule re-locks the controller onto the closest reference state
+(and blends the nearby gains) whenever the deviation exceeds a threshold, giving it
+a measure of recovery. This controller is rolled out inside the \emph{actual}
+MuJoCo simulator, and at every control step (control period $\Delta t = 0.05$~s,
+i.e.\ 20~Hz) we log the observed state together with the commanded torque. Because
+each sample is produced by stepping the same simulator on which the policy is later
+evaluated, the dataset is dynamically valid by construction; cloning it cannot
+produce a policy that is ``correct'' for a physics model it never runs on.
+
+\subsubsection{DAgger-Style Coverage}
+A policy trained only on the nominal states suffers from compounding error: its own
+small prediction errors push it into off-nominal states it was never shown, and the
+errors snowball. To cover this recovery distribution, during the swing-up phase we
+perturb the \emph{applied} torque with Gaussian noise
+($\sigma = 0.15\,\tau_{\max}$) while still logging the \emph{clean} commanded torque
+as the supervised target. Each sample then encodes ``from this (possibly
+off-nominal) state, the expert would command this torque''---a DAgger-style
+relabelling that teaches recovery. The noise latches off once the system first
+reaches upright, leaving the fragile balancing phase undisturbed so the rollout
+still succeeds.
+
+\subsubsection{Dataset Composition}
+The data is gathered in two regimes:
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Swing-up rollouts} start near hanging-down (angles in
+  $\pm0.6$~rad, velocities in $\pm1.0$~rad/s) and run for up to 200 control steps.
+  One in four is run noise-free to retain clean nominal behaviour.
+  \item \textbf{Upright-hold rollouts} start \emph{perturbed} about the upright
+  equilibrium ($q_1 = \pi \pm 0.25$~rad, etc.) and are short and noise-free. Their
+  purpose is to record the stabilizing deviation$\rightarrow$corrective-torque map,
+  without which the policy only ever sees the exact fixed point and never learns to
+  balance.
+\end{itemize}
+Only rollouts that actually reach and hold the upright are kept. This yields
+approximately 600 trajectories---predominantly swing-up, with the remainder
+holding. Each trajectory is stored as an HDF5 group containing
+$\code{states}\in\mathbb{R}^{T\times4}$ and
+$\code{actions}\in\mathbb{R}^{T\times2}$ in
+\file{results/\allowbreak expert\_\allowbreak trajectories.h5}, the common format consumed by both the
+behavioural-cloning and diffusion-policy training scripts.
+
+\begin{table}[h]
+  \centering
+  \caption{Key dataset-generation parameters.}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Symbol} & \textbf{Value} \\
+    \midrule
+    State / action dimension      & $n_x,\,n_u$    & $4,\ 2$ \\
+    Upright goal state            & $x_g$          & $[\pi,\,0,\,0,\,0]^\top$ \\
+    Control period (rate)         & $\Delta t$     & $0.05$~s ($20$~Hz) \\
+    Friction smoothing            & $\epsilon$     & $0.05$~rad/s \\
+    Swing-up exploration noise    & $\sigma$       & $0.15\,\tau_{\max}$ \\
+    Swing-up rollout length       & ---            & $200$ steps \\
+    Approx.\ trajectories kept    & ---            & $\sim\!600$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+\subsection{Diffusion Policy Model}
+We follow the \emph{Diffusion Policy} formulation of Chi et al.\ (2023): instead of
+regressing a single action from the current state, the network models the
+conditional distribution of a short \emph{action chunk} given a window of recent
+observations, and samples from it by iterative denoising. The forward and reverse
+processes are exactly those of Section~\ref{subsec:diffusion} above; what follows is the concrete
+realization for the double pendulum, with particular attention to the input
+representation, the normalization, and the handful of engineering choices that were
+necessary before the policy could actually swing up \emph{and} balance.
+
+\subsubsection{Conditioning and Action Representation}
+The diffusion happens over an action chunk $a^{1:H}$ of $H = 10$ future torque
+pairs; the network is \emph{conditioned} on a context vector $c$ that is left clean
+(never noised). The context is built from the last $K = 4$ observed states plus the
+fixed goal. Two representation choices proved important:
+
+\paragraph{Angular features.}
+Feeding raw angles is harmful because $q$ wraps at $\pm\pi$: two physically
+identical configurations can be numerically far apart, and the discontinuity sits
+right where the swing-up passes. We therefore map every state through a
+wrap-free angular feature transform
+\begin{equation}
+  \phi(x) = \big[\sin q_1,\ \cos q_1,\ \sin q_2,\ \cos q_2,\ \tilde{\dot q}_1,\ \tilde{\dot q}_2\big]
+            \in \mathbb{R}^{6}.
+\end{equation}
+
+\paragraph{Min--max normalization.}
+Velocities and torques live on very different scales from the unit-circle angle
+features, so both are min--max scaled into $[-1, 1]$,
+\begin{equation}
+  \tilde{\dot q} = 2\,\frac{\dot q - \dot q_{\min}}{\dot q_{\max} - \dot q_{\min}} - 1,
+  \qquad
+  \tilde a = 2\,\frac{a - a_{\min}}{a_{\max} - a_{\min}} - 1,
+\end{equation}
+with the per-dimension $(\min,\max)$ statistics computed once and \emph{saved}, so
+the network output can be de-normalized back to physical torques at deployment. The
+diffusion target is the normalized action chunk $\tilde a^{1:H}$.
+
+The conditioning vector concatenates the $K$ feature-mapped history states with the
+goal features,
+\begin{equation}
+  c = \big[\phi(x_{i-K+1}),\, \ldots,\, \phi(x_i),\, \phi(x_g)\big]
+      \in \mathbb{R}^{(K+1)\cdot 6} = \mathbb{R}^{30}.
+\end{equation}
+Including the velocity-carrying history (rather than a single state) gives the
+policy the information it needs to act on this second-order system, and the explicit
+goal token makes the same network reusable for different targets. Windows are
+zero-padded at the trajectory ends by repeating the first state / last action.
+
+\subsubsection{Noise-Prediction Network}
+The network $\epsilon_\theta(\tilde a^{1:H}_t, t, c)$ predicts the noise added to the
+action chunk and is trained with the standard $\epsilon$-MSE objective. We implement two 
+interchangeable backbones behind a common $\texttt{forward}(a_{\text{noisy}}, t, c)$ contract:
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{MLP} --- flattens the chunk to $H\!\cdot\!n_u$, concatenates a
+  learned embedding of the (normalized) diffusion timestep and of $c$, and passes
+  it through a SiLU MLP. It ignores the temporal structure of the chunk.
+  \item \textbf{Trajectory Transformer} (default) --- treats the $H$ actions as a
+  token sequence with learned positional embeddings, and \emph{prepends two context
+  tokens} (one for the diffusion timestep, one for $c$) so every action token can
+  attend to them. It uses pre-norm encoder layers with GELU activations; only the
+  $H$ action positions are projected back to torques. This preserves the temporal
+  correlation within a chunk that the MLP discards.
+\end{itemize}
+The diffusion timestep enters as a sinusoidal embedding (transformer) or a small
+learned embedding (MLP), with $t$ normalized to $[0,1]$ by dividing by $T$.
+
+\subsubsection{Noise Schedule with Zero Terminal SNR}
+We use a linear $\beta$ schedule over $T = 20$ steps,
+$\beta_t \in [3\times10^{-4},\, 0.1]$. The upper end is deliberately large: sampling
+starts from pure Gaussian noise, so the inference prior only matches the forward
+marginal $q(x_T \mid x_0)$ if the terminal signal-to-noise ratio is driven to
+(approximately) zero, i.e.\ $\bar\alpha_T \approx 0$ (the zero-terminal-SNR
+condition, Lin et al.\ 2023). An earlier, milder schedule left a large fraction of
+the action signal intact at $x_T$, creating a train/inference mismatch that the
+denoiser never recovered from; enlarging \texttt{end\_beta} fixed it.
+
+\subsubsection{Training Tricks}
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Trajectory-level split, train-only stats.} The data is split
+  $70/15/15$ into train/val/test \emph{by trajectory} before any window slicing, so
+  no two windows of the same trajectory straddle the boundary. Normalization
+  statistics are computed on the \emph{train fold only} and reused for val/test;
+  letting the held-out folds normalize themselves would leak their distribution
+  into the inputs.
+  \item \textbf{EMA weights.} We keep an exponential moving average
+  ($\text{decay} = 0.999$) of the network weights and use the EMA copy for all
+  inference. The EMA is a much smoother estimate of the learned map; near the
+  \emph{unstable} upright equilibrium this matters concretely, because a jittery
+  gain perturbs the torque and topples the pendulum. The EMA model is what gets
+  saved to the checkpoint.
+  \item \textbf{Optimizer / schedule.} Adam with a per-step cosine-annealing
+  learning-rate schedule, plus mixed-precision (AMP) training on GPU.
+\end{itemize}
+
+\subsubsection{Inference and Control Tricks}
+At control time the policy denoises an action chunk via DDPM ancestral sampling
+(reverse diffusion over the $T$ steps), conditioned on the current history and goal,
+then de-normalizes the result back to physical torques. Two choices are what make
+the closed loop stable rather than merely plausible:
+\begin{itemize}[leftmargin=1.5em]
+  \item \textbf{Deterministic (noise-free) sampling for control.} The ancestral
+  noise injected at each reverse step is dropped, so the sampler returns the
+  posterior mean. This sharply lowers action variance --- essential when
+  \emph{stabilizing} the unstable upright, where stray sampling noise on the torque
+  is enough to drop the pendulum. (Stochastic sampling is kept available for when
+  sample diversity, rather than control, is the goal.)
+  \item \textbf{Short execution horizon.} Although the network predicts $H = 10$
+  actions, only the leading $n_\text{exec}$ are executed before re-planning
+  (receding-horizon action chunking). In practice executing a single action per
+  re-plan is what reliably swings up; committing to longer open-loop chunks lets the
+  chaotic dynamics diverge from the plan.
+\end{itemize}
+
+\begin{table}[h]
+  \centering
+  \caption{Diffusion-policy model and training hyperparameters (defaults).}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Symbol} & \textbf{Value} \\
+    \midrule
+    Observation history       & $K$            & $4$ states \\
+    Feature dimension         & ---            & $6$ per state \\
+    Action prediction horizon & $H$            & $10$ \\
+    Conditioning dimension    & ---            & $30$ \\
+    Diffusion steps           & $T$            & $20$ \\
+    $\beta$ schedule          & $\beta_t$      & linear $[3\!\times\!10^{-4},\,0.1]$ \\
+    EMA decay                 & ---            & $0.999$ \\
+    Optimizer / LR            & ---            & Adam, $10^{-4}$ (cosine) \\
+    Batch size / epochs       & ---            & $256\,/\,400$ \\
+    Default backbone          & ---            & Transformer ($d{=}128$, 4 heads, 2 layers) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 \end{document}
