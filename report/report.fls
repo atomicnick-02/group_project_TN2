@@ -1,6 +1,6 @@
 PWD /home/nickv/Documents/School/group_project_TN2/report
 INPUT /home/nickv/.miktex/texmfs/data/miktex/data/le/pdftex/pdflatex.fmt
-INPUT /home/nickv/Documents/School/group_project_TN2/report/report.tex
+INPUT report.tex
 OUTPUT report.log
 INPUT /home/nickv/.miktex/texmfs/install/tex/latex/base/article.cls
 INPUT /home/nickv/.miktex/texmfs/install/tex/latex/base/article.cls
@@ -231,9 +231,9 @@ INPUT ./images/part1/training_bc.png
 INPUT ./images/part1/training_bc.png
 INPUT ./images/part1/training_bc.png
 INPUT ./images/part1/training_bc.png
+INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmti10.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/jknappen/ec/tcrm1095.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmr9.tfm
-INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmti10.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmtt10.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmtt8.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmtt8.tfm

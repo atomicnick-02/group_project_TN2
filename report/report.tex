@@ -59,7 +59,7 @@ Behavioural-Cloning Pipeline for Double-Pendulum Swing-Up}
 \clearpage
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Introduction}
-The goal of this project is to compare the performance of 2 different Imitation control methods.
+The goal of this project is to compare the performance of 2 different Imitation Learnig control methods.
  The first method is a behavioural cloning approach, 
 where we use a dataset of expert demonstrations to train a policy 
 that mimics the expert's actions. The second is a diffusion policy approach,
@@ -116,8 +116,9 @@ As it shown above the network has an input layer of size $6$ and 4 hidden fully 
 \subsection{Diffusion}\label{subsec:diffusion}
 In order to understand the diffusion policy approach, we first need to understand
 the concept of diffusion models. Diffusion models are a class of generative models
-that learn to generate structured data (in our case, action sequences) 
-by iteratively denoising a sample of noise.
+that learn to generate structured data (in our case, action sequences)
+by iteratively denoising a sample of noise. The formulation we summarise below
+follows the treatment in \emph{Understanding Deep Learning} \cite{prince2023understanding}.
 
 \subsection*{Parameter Setup}
 For the diffusion model, we first need to define the time parameters of the 
@@ -949,8 +950,45 @@ Both models benefit from longer execution horizons, with $H=8$ consistently yiel
 \end{figure}
 
 % ══════════════════════════════════════════════════════════════════════════════
-\section{Conclusion \& Future Work}
+\section{Conclusion}
+We compared two imitation-learning methods --- behavioural cloning (BC) and a
+diffusion policy --- on two tasks: the double-pendulum swing-up and cube stacking
+(Stack and StackThree). For the pendulum the expert data came from a trajectory
+optimizer tracked by a TVLQR controller and run in the MuJoCo simulator; for
+stacking it came from the MimicGen demonstrations of a 7-DoF Franka Panda robot.
+Since both methods were trained on the same data for each task, the comparison
+reflects the choice of method rather than the data.
 
+On the \textbf{double pendulum} both methods swing the pendulum up and hold it, so
+neither one fails the task. On this task, though, BC is the better controller and the
+diffusion policy is the weaker one. The diffusion policy is sensitive to how often it
+replans: it only works if it computes a new action every step, and committing to even
+two actions in a row makes it drift and fall (Figure~\ref{fig:nexec}). Even when it
+succeeds it holds the top less cleanly, with about $8\times$ rougher torque and much
+more jitter than BC, it is more affected by measurement noise ($90\%$ vs.\ BC's
+$100\%$ over random starts), and it is about $28\times$ more expensive per step. It
+does swing up somewhat faster and with lower tracking error (IAE $8.98$ vs.\
+$14.6$~rad$\cdot$s), but that does not outweigh the sensitivity and the jitter. For
+this task BC is the more sensible choice.
+
+On \textbf{cube stacking} it is the other way around: here BC is the weaker method and
+the diffusion policy is the better one. The diffusion policy stacks the cubes more
+reliably ($98\%$ vs.\ $93\%$ on Stack, $74\%$ vs.\ $56\%$ on the harder StackThree),
+and it keeps working when replanning more often, where BC drops off sharply --- for
+example $62\%$ vs.\ BC's $1\%$ at $H=2$ on StackThree. BC's action sequences are
+smoother, but on this task that does not help, because it completes the stack less
+often. The demonstrations contain several valid ways to finish the task, and BC tends
+to blur them into one average motion while the diffusion policy can keep them apart.
+
+The two tasks also need opposite replanning rates, and each method happens to suit
+one of them. The pendulum must replan every step, because its fast, unstable motion
+drifts away from any longer plan; the stacking tasks work best with the long $H=8$
+horizon and fail at $H=1$, where replanning every step breaks up the motion. So
+neither method is best everywhere: BC handles the small, fast balance task well but
+struggles with stacking, and the diffusion policy handles stacking well but is fragile
+on the pendulum. In short, BC is the simpler and cheaper choice for smooth control of
+small, balance-type problems, and the diffusion policy is the better choice for larger
+tasks such as manipulation, where the same job can be done in several different ways.
 
 \clearpage
 \begin{thebibliography}{9}
@@ -959,6 +997,9 @@ A. Mandlekar, S. Nasiriany, B. Wen, I. Akinola, Y. Narang, L. Fan, Y. Zhu, and D
 
 \bibitem{robosuite2020}
 Y. Zhu, J. Wong, A. Mandlekar, R. Mart\'{i}n-Mart\'{i}n, A. Joshi, K. Lin, A. Maddukuri, S. Nasiriany, and Y. Zhu, ``robosuite: A Modular Simulation Framework and Benchmark for Robot Learning,'' in \emph{arXiv preprint arXiv:2009.12293}, 2020.
+
+\bibitem{prince2023understanding}
+S. J. D. Prince, \emph{Understanding Deep Learning}. Cambridge, MA: MIT Press, 2023. [Online]. Available: \url{https://udlbook.github.io/udlbook/}
 \end{thebibliography}
 
 \end{document}
