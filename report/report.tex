@@ -13,7 +13,8 @@
 \usepackage{subcaption}
 \usepackage[hidelinks]{hyperref}
 \usepackage{microtype}
-
+\usepackage{algorithm}
+\usepackage{algpseudocode}
 % ── Code listing style ────────────────────────────────────────────────────────
 \definecolor{codebg}{rgb}{0.97,0.97,0.97}
 \definecolor{codekw}{rgb}{0.10,0.10,0.55}
@@ -95,8 +96,106 @@ So now we need to define a procedure to undo the noise in $T$ steps.
 The reverse diffusion process is defined as follows:
 
 \begin{equation}
-  x_0 = \frac{1}{\sqrt{\bar{\alpha}_t}} \cdot x_t - \frac{\sqrt{1 - \bar{\alpha}_t}}{\sqrt{\bar{\alpha}_t}} \cdot \epsilon_\theta(x_t, t), \quad \epsilon_\theta(x_t, t) \sim \mathcal{N}(0, I)  
+  x_0 = \frac{1}{\sqrt{\bar{\alpha}_t}} \cdot x_t - \frac{\sqrt{1 - \bar{\alpha}_t}}{\sqrt{\bar{\alpha}_t}} \cdot \epsilon (x_t, t), \quad \epsilon (x_t, t) \sim \mathcal{N}(0, I)  
 \end{equation}
+
+However, we do not have access to the true noise $\epsilon$ that was added
+during the forward diffusion process. Instead, we train a neural network $\epsilon_\theta(x_t, t)$
+to predict the noise given the noisy data $x_t$ and the time step $t$.
+
+\begin{algorithm}[H]
+\caption{Diffusion Model Training}
+\label{alg:diffusion_training}
+\begin{algorithmic}[1]
+\Require Training dataset $\mathcal{D}$, diffusion steps $T$
+\State Initialize network parameters $\theta$
+\Repeat
+    \ForAll{$x_0 \in \mathcal{D}$}
+        \State Sample timestep $t \sim \mathrm{Uniform}\left(\{1,\ldots,T\}\right)$
+        \State Sample noise $\epsilon \sim \mathcal{N}(0,I)$
+        \State Construct noisy sample
+        \[
+        x_t=
+        \sqrt{\bar{\alpha}_t}\,x_0+
+        \sqrt{1-\bar{\alpha}_t}\,\epsilon
+        \]
+        \State Predict noise
+        \[
+        \hat{\epsilon}
+        =
+        \epsilon_\theta(x_t,t,c)
+        \]
+        \State Compute loss
+        \[
+        \mathcal{L}
+        =
+        \left\|
+        \hat{\epsilon}-\epsilon
+        \right\|_2^2
+        \]
+    \EndFor
+    \State Update $\theta$ using the average batch loss.
+\Until{convergence}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Reverse Diffusion Sampling}
+\label{alg:diffusion_sampling}
+\begin{algorithmic}[1]
+\Require Trained network $\epsilon_\theta$, conditioning vector $c$
+\State Sample
+\[
+x_T \sim \mathcal{N}(0,I)
+\]
+\For{$t=T,T-1,\ldots,2$}
+    \State Predict noise
+    \[
+    \hat{\epsilon}
+    =
+    \epsilon_\theta(x_t,t,c)
+    \]
+    \State Compute the posterior mean
+    \[
+    \hat{x}_{t-1}
+    =
+    \frac{1}{\sqrt{\alpha_t}}
+    \left(
+    x_t
+    -
+    \frac{\beta_t}{\sqrt{1-\bar{\alpha}_t}}
+    \hat{\epsilon}
+    \right)
+    \]
+    \State Sample
+    \[
+    \epsilon \sim \mathcal{N}(0,I)
+    \]
+    \State Update
+    \[
+    x_{t-1}
+    =
+    \hat{x}_{t-1}
+    +
+    \sigma_t \epsilon
+    \]
+    where $\sigma_t = \sqrt{\bar{\beta}_t}$
+\EndFor
+\State Compute the final denoised sample
+\[
+x_0
+=
+\frac{1}{\sqrt{\alpha_1}}
+\left(
+x_1
+-
+\frac{\beta_1}{\sqrt{1-\bar{\alpha}_1}}
+\epsilon_\theta(x_1,1,c)
+\right)
+\]
+\State \Return $x_0$
+\end{algorithmic}
+\end{algorithm}
 
 \subsection{Generating Dataset}
 Both learning methods are trained by imitation, so they are only ever as good as
