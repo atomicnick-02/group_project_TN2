@@ -539,7 +539,7 @@ def main():
     p.add_argument("--angle-tol", type=float, default=0.20)
     p.add_argument("--vel-tol", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--n-random", type=int, default=10,
+    p.add_argument("--n-random", type=int, default=50,
                    help="random-initial-position stress-test runs per method")
     p.add_argument("--random-noise", type=float, default=0.025,
                    help="observation-noise sigma for the random-init battery")

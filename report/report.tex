@@ -111,7 +111,7 @@ to predict the noise given the noisy data $x_t$ and the time step $t$.
 \State Initialize network parameters $\theta$
 \Repeat
     \ForAll{$x_0 \in \mathcal{D}$}
-        \State Sample timestep $t \sim \mathrm{Uniform}\left(\{1,\ldots,T\}\right)$
+        \State Sample timestep $t \sim \mathrm{Uniform}\left(\{1,\ldots,T-1\}\right)$
         \State Sample noise $\epsilon \sim \mathcal{N}(0,I)$
         \State Construct noisy sample
         \[
@@ -144,56 +144,40 @@ to predict the noise given the noisy data $x_t$ and the time step $t$.
 \label{alg:diffusion_sampling}
 \begin{algorithmic}[1]
 \Require Trained network $\epsilon_\theta$, conditioning vector $c$
-\State Sample
-\[
-x_T \sim \mathcal{N}(0,I)
-\]
-\For{$t=T,T-1,\ldots,2$}
+\State Sample the pure-noise prior $x \sim \mathcal{N}(0,I)$
+\For{$t=T-1,T-2,\ldots,1$}
     \State Predict noise
     \[
     \hat{\epsilon}
     =
-    \epsilon_\theta(x_t,t,c)
+    \epsilon_\theta(x,t,c)
     \]
-    \State Compute the posterior mean
+    \State Take the posterior-mean step
     \[
-    \hat{x}_{t-1}
-    =
+    x
+    \leftarrow
     \frac{1}{\sqrt{\alpha_t}}
     \left(
-    x_t
+    x
     -
     \frac{\beta_t}{\sqrt{1-\bar{\alpha}_t}}
     \hat{\epsilon}
     \right)
     \]
-    \State Sample
-    \[
-    \epsilon \sim \mathcal{N}(0,I)
-    \]
-    \State Update
-    \[
-    x_{t-1}
-    =
-    \hat{x}_{t-1}
-    +
-    \sigma_t \epsilon
-    \]
-    where $\sigma_t = \sqrt{\bar{\beta}_t}$
+    \If{$t>1$}
+        \State Inject ancestral noise, $\epsilon \sim \mathcal{N}(0,I)$
+        \[
+        x
+        \leftarrow
+        x
+        +
+        \sigma_t \epsilon,
+        \qquad
+        \sigma_t = \sqrt{\beta_t}
+        \]
+    \EndIf
 \EndFor
-\State Compute the final denoised sample
-\[
-x_0
-=
-\frac{1}{\sqrt{\alpha_1}}
-\left(
-x_1
--
-\frac{\beta_1}{\sqrt{1-\bar{\alpha}_1}}
-\epsilon_\theta(x_1,1,c)
-\right)
-\]
-\State \Return $x_0$
+\State \Return $x$ (the denoised action chunk $\tilde{a}^{1:H}$)
 \end{algorithmic}
 \end{algorithm}
 
@@ -298,7 +282,7 @@ $\code{actions}\in\mathbb{R}^{T\times2}$ in
 \file{results/\allowbreak expert\_\allowbreak trajectories.h5}, the common format consumed by both the
 behavioural-cloning and diffusion-policy training scripts.
 
-\begin{table}[h]
+\begin{table}[H]
   \centering
   \caption{Key dataset-generation parameters.}
   \begin{tabular}{@{}lll@{}}
@@ -368,7 +352,7 @@ leaves the architecture \emph{able}, in principle, to be retargeted to other
 set-points, but every trajectory in our dataset shares the single upright goal
 $x_g = [\pi,0,0,0]^\top$; the goal input is therefore effectively constant, and the
 network never actually learns to condition on it. Genuine retargeting to a
-different goal would require demonstrations at that goal. Windows are zero-padded at
+different goal would require demonstrations at that goal. Windows are edge-padded at
 the trajectory ends by repeating the first state / last action.
 
 \subsubsection{Noise-Prediction Network}
@@ -430,7 +414,7 @@ $T$ that the closed-loop controller depends on.
 
 \subsubsection{Inference and Control Tricks}
 At control time the policy denoises an action chunk via DDPM ancestral sampling
-(reverse diffusion over the $T$ steps), conditioned on the current history and goal,
+(reverse diffusion over the $T-1$ denoising steps), conditioned on the current history and goal,
 then de-normalizes the result back to physical torques. Two choices are what make
 the closed loop stable rather than merely plausible:
 \begin{itemize}[leftmargin=1.5em]
@@ -469,8 +453,98 @@ the closed loop stable rather than merely plausible:
 \end{table}
 
 \subsection{Comparison}
-% =====  RANDOM-INIT SUCCESS RATE  (n=50, noise=0.025)  =====
-%    method  n_runs  noise_sigma  n_success  success_rate
-%        bc      50        0.025         50             1
-% diffusion      50        0.025         47          0.94
+We evaluate both policies on the same double-pendulum swing-up task with the shared
+\file{evaluate\_methods.py} harness, reporting success rate (nominal and over $n=50$
+random initial conditions with observation noise $\sigma=0.025$), time-to-success,
+trajectory quality, stabilization accuracy, control smoothness, per-step inference
+cost, and robustness to increasing observation noise.
+
+\subsubsection{Aggregate metrics}
+Figure~\ref{fig:metrics} collects the headline metrics. Both methods are essentially
+perfect at the task itself: behavioural cloning (BC) succeeds on all nominal and
+all $50$ random-init trials ($100\%$), and the diffusion policy matches it on the
+nominal case while losing only three random-init trials ($47/50 = 94\%$). The
+differences therefore live not in \emph{whether} the pendulum is swung up but in
+\emph{how}. The diffusion policy reaches the upright noticeably faster
+($5.09$~s vs.\ $7.53$~s) and with substantially higher and more consistent
+trajectory quality: its integrated absolute angle error (IAE) is less than half
+that of BC ($8.2$ vs.\ $18.2$~rad$\cdot$s) and its trial-to-trial spread is far
+tighter, whereas BC's large error bar shows it occasionally takes long, meandering
+swing-ups.
+
+The trade-off appears once the pendulum is upright. BC holds the equilibrium more
+accurately (steady-state angle error $0.053$ vs.\ $0.075$~rad) and, most strikingly,
+does so an order of magnitude more smoothly: its mean torque increment
+($0.0025$~Nm/step) is roughly $10\times$ smaller than the diffusion policy's
+($0.0238$~Nm/step). Finally, the methods differ by more than an order of magnitude in
+compute: a single BC forward pass costs $\sim\!0.29$~ms, while one diffusion control
+step --- which requires the full iterative denoising chain --- costs $\sim\!6.6$~ms
+(note the logarithmic axis).
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots_comp_bc_diffusion/metrics_comparison.png}
+  \caption{Aggregate metrics: BC vs.\ diffusion policy.}
+  \label{fig:metrics}
+\end{figure}
+
+\subsubsection{Robustness to observation noise}
+Figure~\ref{fig:robustness} sweeps observation noise (Gaussian, $\sigma$ on angles
+and $5\sigma$ on velocities) and reports the success rate at each level. Up to
+$\sigma=0.02$ both policies are unaffected and succeed every time. Beyond that they
+degrade, but BC degrades more gracefully: at $\sigma=0.03$ it still succeeds
+$100\%$ of the time while the diffusion policy has already dropped to $50\%$, and at
+$\sigma=0.04$ BC holds $50\%$ against the diffusion policy's $25\%$. At the most
+severe level ($\sigma=0.05$) both collapse to $0\%$. The diffusion policy's heavier
+reliance on a short observation \emph{history} (the $K=4$ state window) plausibly
+makes it more sensitive to corrupted inputs than BC's single-state map.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.72\textwidth]{plots_comp_bc_diffusion/robustness_vs_noise.png}
+  \caption{Robustness to observation noise.}
+  \label{fig:robustness}
+\end{figure}
+
+\subsubsection{Example trajectories}
+Figures~\ref{fig:ex_states} and~\ref{fig:ex_controls} show a representative
+(best nominal) trial and make the smoothness/accuracy trade-off concrete. In the
+state plot both policies drive all four states to the upright goal, with the
+diffusion policy exhibiting a slightly faster, sharper rise. The control plot is the
+clearest discriminator: BC's torque settles to a near-constant, almost-zero hold once
+upright, whereas the diffusion policy's torque \emph{chatters} continuously at high
+frequency throughout the hold phase. This persistent micro-correction is exactly what
+the high mean-$|\Delta u|$ in Figure~\ref{fig:metrics} measures, and it stems from
+re-sampling a fresh action chunk every control step near the unstable equilibrium ---
+even with deterministic sampling, tiny variations in the denoised output translate
+into a jittery torque.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots_comp_bc_diffusion/example_states.png}
+  \caption{Example state trajectories.}
+  \label{fig:ex_states}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{plots_comp_bc_diffusion/example_controls.png}
+  \caption{Example control trajectories.}
+  \label{fig:ex_controls}
+\end{figure}
+
+\subsubsection{Summary}
+On this task the two methods are best read as occupying different points on a
+cost/quality trade-off rather than one strictly dominating the other. The diffusion
+policy plans better swing-ups --- faster and with markedly lower, more consistent
+trajectory error --- which is what one expects from a model that captures the
+multimodal, temporally correlated action distribution. Behavioural cloning, despite
+its simplicity, is the more practical controller for \emph{deployment}: it stabilizes
+more tightly, commands far smoother torques, is more robust to observation noise, and
+is over $20\times$ cheaper per control step. For an embedded, real-time
+swing-up-and-balance controller BC is the pragmatic choice; the diffusion policy's
+advantages would matter more on tasks with genuinely multimodal expert behaviour,
+where a unimodal regressor like BC would average incompatible demonstrations
+together.
+
 \end{document}

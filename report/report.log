@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999998 (MiKTeX 26.5) (preloaded format=xelatex 2026.5.8)  26 JUN 2026 14:42
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.5) (preloaded format=pdflatex 2026.5.10)  26 JUN 2026 16:06
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -12,14 +12,14 @@ Document Class: article 2025/01/22 v1.4n Standard LaTeX document class
 (/home/nickv/.miktex/texmfs/install/tex/latex/base/size11.clo
 File: size11.clo 2025/01/22 v1.4n Standard LaTeX file (size option)
 )
-\c@part=\count271
-\c@section=\count272
-\c@subsection=\count273
-\c@subsubsection=\count274
-\c@paragraph=\count275
-\c@subparagraph=\count276
-\c@figure=\count277
-\c@table=\count278
+\c@part=\count275
+\c@section=\count276
+\c@subsection=\count277
+\c@subsubsection=\count278
+\c@paragraph=\count279
+\c@subparagraph=\count280
+\c@figure=\count281
+\c@table=\count282
 \abovecaptionskip=\skip49
 \belowcaptionskip=\skip50
 \bibindent=\dimen150
@@ -37,9 +37,9 @@ Package: ifvtex 2019/10/25 v1.7 ifvtex legacy package. Use iftex instead.
 (/home/nickv/.miktex/texmfs/install/tex/generic/iftex/iftex.sty
 Package: iftex 2024/12/12 v1.0g TeX engine tests
 ))
-\Gm@cnth=\count279
-\Gm@cntv=\count280
-\c@Gm@tempcnt=\count281
+\Gm@cnth=\count283
+\Gm@cntv=\count284
+\c@Gm@tempcnt=\count285
 \Gm@bindingoffset=\dimen151
 \Gm@wd@mp=\dimen152
 \Gm@odd@mp=\dimen153
@@ -71,14 +71,14 @@ Package: amsbsy 1999/11/29 v1.2d Bold Symbols
 (/home/nickv/.miktex/texmfs/install/tex/latex/amsmath/amsopn.sty
 Package: amsopn 2022/04/08 v2.04 operator names
 )
-\inf@bad=\count282
+\inf@bad=\count286
 LaTeX Info: Redefining \frac on input line 233.
-\uproot@=\count283
-\leftroot@=\count284
+\uproot@=\count287
+\leftroot@=\count288
 LaTeX Info: Redefining \overline on input line 398.
 LaTeX Info: Redefining \colon on input line 409.
-\classnum@=\count285
-\DOTSCASE@=\count286
+\classnum@=\count289
+\DOTSCASE@=\count290
 LaTeX Info: Redefining \ldots on input line 495.
 LaTeX Info: Redefining \dots on input line 498.
 LaTeX Info: Redefining \cdots on input line 619.
@@ -91,20 +91,20 @@ LaTeX Info: Redefining \Bigg on input line 724.
 \big@size=\dimen161
 LaTeX Font Info:    Redeclaring font encoding OML on input line 742.
 LaTeX Font Info:    Redeclaring font encoding OMS on input line 743.
-\macc@depth=\count287
+\macc@depth=\count291
 LaTeX Info: Redefining \bmod on input line 904.
 LaTeX Info: Redefining \pmod on input line 909.
 LaTeX Info: Redefining \smash on input line 939.
 LaTeX Info: Redefining \relbar on input line 969.
 LaTeX Info: Redefining \Relbar on input line 970.
-\c@MaxMatrixCols=\count288
+\c@MaxMatrixCols=\count292
 \dotsspace@=\muskip17
-\c@parentequation=\count289
-\dspbrk@lvl=\count290
+\c@parentequation=\count293
+\dspbrk@lvl=\count294
 \tag@help=\toks20
-\row@=\count291
-\column@=\count292
-\maxfields@=\count293
+\row@=\count295
+\column@=\count296
+\maxfields@=\count297
 \andhelp@=\toks21
 \eqnshift@=\dimen162
 \alignsep@=\dimen163
@@ -142,10 +142,10 @@ Package: trig 2023/12/02 v1.11 sin cos tan (DPC)
 (/home/nickv/.miktex/texmfs/install/tex/latex/graphics-cfg/graphics.cfg
 File: graphics.cfg 2016/06/04 v1.11 sample graphics configuration
 )
-Package graphics Info: Driver file: xetex.def on input line 106.
+Package graphics Info: Driver file: pdftex.def on input line 106.
 
-(/home/nickv/.miktex/texmfs/install/tex/latex/graphics-def/xetex.def
-File: xetex.def 2025/11/01 v5.0p Graphics/color driver for xetex
+(/home/nickv/.miktex/texmfs/install/tex/latex/graphics-def/pdftex.def
+File: pdftex.def 2025/09/29 v1.2d Graphics/color driver for pdftex
 ))
 \Gin@req@height=\dimen168
 \Gin@req@width=\dimen169
@@ -162,12 +162,12 @@ Package: booktabs 2020/01/12 v1.61803398 Publication quality tables
 \cmidrulesep=\dimen177
 \cmidrulekern=\dimen178
 \defaultaddspace=\dimen179
-\@cmidla=\count294
-\@cmidlb=\count295
+\@cmidla=\count298
+\@cmidlb=\count299
 \@aboverulesep=\dimen180
 \@belowrulesep=\dimen181
-\@thisruleclass=\count296
-\@lastruleclass=\count297
+\@thisruleclass=\count300
+\@lastruleclass=\count301
 \@thisrulewidth=\dimen182
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/tools/array.sty
@@ -186,10 +186,11 @@ Package: xcolor 2024/09/29 v3.02 LaTeX color extensions (UK)
 (/home/nickv/.miktex/texmfs/install/tex/latex/graphics-cfg/color.cfg
 File: color.cfg 2016/01/02 v1.6 sample color configuration
 )
-Package xcolor Info: Driver file: xetex.def on input line 274.
+Package xcolor Info: Driver file: pdftex.def on input line 274.
 
 (/home/nickv/.miktex/texmfs/install/tex/latex/graphics/mathcolor.ltx)
 Package xcolor Info: Model `cmy' substituted by `cmy0' on input line 1349.
+Package xcolor Info: Model `hsb' substituted by `rgb' on input line 1353.
 Package xcolor Info: Model `RGB' extended on input line 1365.
 Package xcolor Info: Model `HTML' substituted by `rgb' on input line 1367.
 Package xcolor Info: Model `Hsb' substituted by `hsb' on input line 1368.
@@ -199,17 +200,17 @@ Package xcolor Info: Model `Gray' substituted by `gray' on input line 1371.
 Package xcolor Info: Model `wave' substituted by `hsb' on input line 1372.
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/listings/listings.sty
-\lst@mode=\count298
+\lst@mode=\count302
 \lst@gtempboxa=\box57
 \lst@token=\toks25
-\lst@length=\count299
+\lst@length=\count303
 \lst@currlwidth=\dimen185
-\lst@column=\count300
-\lst@pos=\count301
+\lst@column=\count304
+\lst@pos=\count305
 \lst@lostspace=\dimen186
 \lst@width=\dimen187
-\lst@newlines=\count302
-\lst@lineno=\count303
+\lst@newlines=\count306
+\lst@lineno=\count307
 \lst@maxwidth=\dimen188
 
 (/home/nickv/.miktex/texmfs/install/tex/latex/listings/lstpatch.sty
@@ -217,8 +218,8 @@ File: lstpatch.sty 2025/11/14 1.11b (Carsten Heinz)
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/listings/lstmisc.sty
 File: lstmisc.sty 2025/11/14 1.11b (Carsten Heinz)
-\c@lstnumber=\count304
-\lst@skipnumbers=\count305
+\c@lstnumber=\count308
+\lst@skipnumbers=\count309
 \lst@framebox=\box58
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/listings/listings.cfg
@@ -238,8 +239,8 @@ Package: enumitem 2025/02/06 v3.11 Customized lists
 \enit@outerparindent=\dimen189
 \enit@toks=\toks26
 \enit@inbox=\box59
-\enit@count@id=\count306
-\enitdp@description=\count307
+\enit@count@id=\count310
+\enitdp@description=\count311
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/caption/caption.sty
 Package: caption 2023/08/05 v3.6o Customizing captions (AR)
@@ -256,16 +257,16 @@ Package: caption3 2023/07/31 v2.4d caption3 kernel (AR)
 \caption@hangindent=\dimen197
 Package caption Info: Standard document class detected.
 )
-\c@caption@flags=\count308
-\c@continuedfloat=\count309
+\c@caption@flags=\count312
+\c@continuedfloat=\count313
 Package caption Info: listings package is loaded.
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/caption/subcaption.sty
 Package: subcaption 2023/07/28 v1.6b Sub-captions (AR)
 Package caption Info: New subtype `subfigure' on input line 238.
-\c@subfigure=\count310
+\c@subfigure=\count314
 Package caption Info: New subtype `subtable' on input line 238.
-\c@subtable=\count311
+\c@subtable=\count315
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/hyperref/hyperref.sty
 Package: hyperref 2026-01-29 v7.01p Hypertext links for LaTeX
@@ -291,7 +292,7 @@ Package: infwarerr 2019/12/03 v1.5 Providing info/warning/error messages (HO)
 )
 Package pdftexcmds Info: \pdf@primitive is available.
 Package pdftexcmds Info: \pdf@ifprimitive is available.
-Package pdftexcmds Info: \pdfdraftmode not found.
+Package pdftexcmds Info: \pdfdraftmode found.
 ))
 (/home/nickv/.miktex/texmfs/install/tex/latex/hycolor/hycolor.sty
 Package: hycolor 2020-01-27 v1.10 Color options for hyperref/bookmark (HO)
@@ -308,30 +309,34 @@ Package: gettitlestring 2019/12/15 v1.6 Cleanup title references (HO)
  (/home/nickv/.miktex/texmfs/install/tex/latex/kvoptions/kvoptions.sty
 Package: kvoptions 2022-06-15 v3.15 Key value format for package options (HO)
 ))
-\c@section@level=\count312
+\c@section@level=\count316
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/etoolbox/etoolbox.sty
 Package: etoolbox 2025/10/02 v2.5m e-TeX tools for LaTeX (JAW)
-\etb@tempcnta=\count313
+\etb@tempcnta=\count317
 )
 (/home/nickv/.miktex/texmfs/install/tex/generic/stringenc/stringenc.sty
 Package: stringenc 2019/11/29 v1.12 Convert strings between diff. encodings (HO
 )
 )
 \@linkdim=\dimen198
-\Hy@linkcounter=\count314
-\Hy@pagecounter=\count315
+\Hy@linkcounter=\count318
+\Hy@pagecounter=\count319
 
 (/home/nickv/.miktex/texmfs/install/tex/latex/hyperref/pd1enc.def
 File: pd1enc.def 2026-01-29 v7.01p Hyperref: PDFDocEncoding definition (HO)
+Now handling font encoding PD1 ...
+... no UTF-8 mapping file for font encoding PD1
 )
 (/home/nickv/.miktex/texmfs/install/tex/generic/intcalc/intcalc.sty
 Package: intcalc 2019/12/15 v1.3 Expandable calculations with integers (HO)
 )
-\Hy@SavedSpaceFactor=\count316
+\Hy@SavedSpaceFactor=\count320
 
 (/home/nickv/.miktex/texmfs/install/tex/latex/hyperref/puenc.def
 File: puenc.def 2026-01-29 v7.01p Hyperref: PDF Unicode definition (HO)
+Now handling font encoding PU ...
+... no UTF-8 mapping file for font encoding PU
 )
 Package hyperref Info: Hyper figures OFF on input line 4201.
 Package hyperref Info: Link nesting OFF on input line 4206.
@@ -340,7 +345,7 @@ Package hyperref Info: Plain pages OFF on input line 4216.
 Package hyperref Info: Backreferencing OFF on input line 4221.
 Package hyperref Info: Implicit mode ON; LaTeX internals redefined.
 Package hyperref Info: Bookmarks ON on input line 4468.
-\c@Hy@tempcnt=\count317
+\c@Hy@tempcnt=\count321
 
 (/home/nickv/.miktex/texmfs/install/tex/latex/url/url.sty
 \Urlmuskip=\muskip18
@@ -356,7 +361,7 @@ Package: bitset 2019/12/09 v1.3 Handle bit-vector datatype (HO)
 Package: bigintcalc 2019/12/15 v1.5 Expandable calculations on big integers (HO
 )
 ))
-\Fld@menulength=\count318
+\Fld@menulength=\count322
 \Field@Width=\dimen256
 \Fld@charsize=\dimen257
 Package hyperref Info: Hyper figures OFF on input line 6084.
@@ -366,19 +371,16 @@ Package hyperref Info: backreferencing OFF on input line 6099.
 Package hyperref Info: Link coloring OFF on input line 6104.
 Package hyperref Info: Link coloring with OCG OFF on input line 6109.
 Package hyperref Info: PDF/A mode OFF on input line 6114.
-\Hy@abspage=\count319
-\c@Item=\count320
-\c@Hfootnote=\count321
+\Hy@abspage=\count323
+\c@Item=\count324
+\c@Hfootnote=\count325
 )
-Package hyperref Info: Driver (autodetected): hxetex.
+Package hyperref Info: Driver (autodetected): hpdftex.
 
-(/home/nickv/.miktex/texmfs/install/tex/latex/hyperref/hxetex.def
-File: hxetex.def 2026-01-29 v7.01p Hyperref driver for XeTeX
-\pdfm@box=\box60
-\c@Hy@AnnotLevel=\count322
-\HyField@AnnotCount=\count323
-\Fld@listcount=\count324
-\c@bookmark@seq@number=\count325
+(/home/nickv/.miktex/texmfs/install/tex/latex/hyperref/hpdftex.def
+File: hpdftex.def 2026-01-29 v7.01p Hyperref driver for pdfTeX
+\Fld@listcount=\count326
+\c@bookmark@seq@number=\count327
 
 (/home/nickv/.miktex/texmfs/install/tex/latex/rerunfilecheck/rerunfilecheck.sty
 Package: rerunfilecheck 2025-06-21 v1.11 Rerun checks for auxiliary files (HO)
@@ -393,8 +395,8 @@ Package uniquecounter Info: New unique counter `rerunfilecheck' on input line 2
 ) (/home/nickv/.miktex/texmfs/install/tex/latex/microtype/microtype.sty
 Package: microtype 2026/03/01 v3.2d Micro-typographical refinements (RS)
 \MT@toks=\toks27
-\MT@tempbox=\box61
-\MT@count=\count326
+\MT@tempbox=\box60
+\MT@count=\count328
 LaTeX Info: Redefining \noprotrusionifhmode on input line 1084.
 LaTeX Info: Redefining \leftprotrusion on input line 1085.
 \MT@prot@toks=\toks28
@@ -403,12 +405,13 @@ LaTeX Info: Redefining \textls on input line 1449.
 \MT@outer@kern=\dimen258
 LaTeX Info: Redefining \microtypecontext on input line 2053.
 LaTeX Info: Redefining \textmicrotypecontext on input line 2070.
-\MT@listname@count=\count327
+\MT@listname@count=\count329
 
-(/home/nickv/.miktex/texmfs/install/tex/latex/microtype/microtype-xetex.def
-File: microtype-xetex.def 2026/03/01 v3.2d Definitions specific to xetex (RS)
-LaTeX Info: Redefining \lsstyle on input line 443.
-LaTeX Info: Redefining \lslig on input line 451.
+(/home/nickv/.miktex/texmfs/install/tex/latex/microtype/microtype-pdftex.def
+File: microtype-pdftex.def 2026/03/01 v3.2d Definitions specific to pdftex (RS)
+
+LaTeX Info: Redefining \lsstyle on input line 944.
+LaTeX Info: Redefining \lslig on input line 944.
 \MT@outer@space=\skip58
 )
 Package microtype Info: Loading configuration file microtype.cfg.
@@ -419,23 +422,22 @@ File: microtype.cfg 2026/03/01 v3.2d microtype main configuration file (RS)
 LaTeX Info: Redefining \microtypesetup on input line 3065.
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/algorithms/algorithm.sty
-Invalid UTF-8 byte or sequence at line 11 replaced by U+FFFD.
 Package: algorithm 2009/08/24 v0.1 Document Style `algorithm' - floating enviro
 nment
 
 (/home/nickv/.miktex/texmfs/install/tex/latex/float/float.sty
 Package: float 2001/11/08 v1.3d Float enhancements (AL)
-\c@float@type=\count328
+\c@float@type=\count330
 \float@exts=\toks29
-\float@box=\box62
+\float@box=\box61
 \@float@everytoks=\toks30
-\@floatcapt=\box63
+\@floatcapt=\box62
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/base/ifthen.sty
 Package: ifthen 2024/03/16 v1.1e Standard LaTeX ifthen package (DPC)
 )
 \@float@every@algorithm=\toks31
-\c@algorithm=\count329
+\c@algorithm=\count331
 )
 (/home/nickv/.miktex/texmfs/install/tex/latex/algorithmicx/algpseudocode.sty
 Package: algpseudocode 
@@ -444,26 +446,24 @@ Package: algpseudocode
 Package: algorithmicx 2005/04/27 v1.2 Algorithmicx
 
 Document Style algorithmicx 1.2 - a greatly improved `algorithmic' style
-\c@ALG@line=\count330
-\c@ALG@rem=\count331
-\c@ALG@nested=\count332
+\c@ALG@line=\count332
+\c@ALG@rem=\count333
+\c@ALG@nested=\count334
 \ALG@tlm=\skip59
 \ALG@thistlm=\skip60
-\c@ALG@Lnr=\count333
-\c@ALG@blocknr=\count334
-\c@ALG@storecount=\count335
-\c@ALG@tmpcounter=\count336
+\c@ALG@Lnr=\count335
+\c@ALG@blocknr=\count336
+\c@ALG@storecount=\count337
+\c@ALG@tmpcounter=\count338
 \ALG@tmplength=\skip61
 )
 Document Style - pseudocode environments for use with the `algorithmicx' style
 ) (/home/nickv/.miktex/texmfs/install/tex/latex/listings/lstlang1.sty
 File: lstlang1.sty 2025/11/14 1.11b listings language file
 )
-(/home/nickv/.miktex/texmfs/install/tex/latex/l3backend/l3backend-xetex.def
-File: l3backend-xetex.def 2026-02-18 L3 backend support: XeTeX
-\g__graphics_track_int=\count337
-\g__pdfannot_backend_int=\count338
-\g__pdfannot_backend_link_int=\count339
+(/home/nickv/.miktex/texmfs/install/tex/latex/l3backend/l3backend-pdftex.def
+File: l3backend-pdftex.def 2026-02-18 L3 backend support: PDF output (pdfTeX)
+\l__color_backend_stack_int=\count339
 )
 (report.aux)
 \openout1 = `report.aux'.
@@ -478,8 +478,6 @@ LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 51.
 LaTeX Font Info:    ... okay on input line 51.
 LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 51.
 LaTeX Font Info:    ... okay on input line 51.
-LaTeX Font Info:    Checking defaults for TU/lmr/m/n on input line 51.
-LaTeX Font Info:    ... okay on input line 51.
 LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 51.
 LaTeX Font Info:    ... okay on input line 51.
 LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 51.
@@ -490,9 +488,9 @@ LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 51.
 LaTeX Font Info:    ... okay on input line 51.
 
 *geometry* driver: auto-detecting
-*geometry* detected driver: xetex
+*geometry* detected driver: pdftex
 *geometry* verbose mode - [ preamble ] result:
-* driver: xetex
+* driver: pdftex
 * paper: a4paper
 * layout: <same size as paper>
 * layoutoffset:(h,v)=(0.0pt,0.0pt)
@@ -523,12 +521,34 @@ LaTeX Font Info:    ... okay on input line 51.
 * \@reversemarginfalse
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
-\c@lstlisting=\count340
+(/home/nickv/.miktex/texmfs/install/tex/context/base/mkii/supp-pdf.mkii
+[Loading MPS to PDF converter (version 2006.09.02).]
+\scratchcounter=\count340
+\scratchdimen=\dimen259
+\scratchbox=\box63
+\nofMPsegments=\count341
+\nofMParguments=\count342
+\everyMPshowfont=\toks32
+\MPscratchCnt=\count343
+\MPscratchDim=\dimen260
+\MPnumerator=\count344
+\makeMPintoPDFobject=\count345
+\everyMPtoPDFconversion=\toks33
+) (/home/nickv/.miktex/texmfs/install/tex/latex/epstopdf-pkg/epstopdf-base.sty
+Package: epstopdf-base 2020-01-24 v2.11 Base part for package epstopdf
+Package epstopdf-base Info: Redefining graphics rule for `.eps' on input line 4
+85.
+
+(/home/nickv/.miktex/texmfs/install/tex/latex/00miktex/epstopdf-sys.cfg
+File: epstopdf-sys.cfg 2021/03/18 v2.0 Configuration of epstopdf for MiKTeX
+))
+\c@lstlisting=\count346
 Package caption Info: Begin \AtBeginDocument code.
 Package caption Info: float package is loaded.
 Package caption Info: hyperref package is loaded.
 Package caption Info: End \AtBeginDocument code.
 Package hyperref Info: Link coloring OFF on input line 51.
+
 (report.out) (report.out)
 \@outlinefile=\write3
 \openout3 = `report.out'.
@@ -540,16 +560,18 @@ Package microtype Info: Applying patch `eqnum' on input line 51.
 Package microtype Info: Applying patch `footnote' on input line 51.
 Package microtype Info: Applying patch `verbatim' on input line 51.
 LaTeX Info: Redefining \microtypesetup on input line 51.
+Package microtype Info: Generating PDF output.
 Package microtype Info: Character protrusion enabled (level 2).
 Package microtype Info: Using default protrusion set `alltext'.
+Package microtype Info: Automatic font expansion enabled (level 2),
+(microtype)             stretch: 20, shrink: 20, step: 1, non-selected.
+Package microtype Info: Using default expansion set `alltext-nott'.
+Package microtype Info: Patching command `\showhyphens'.
 Package microtype Info: No adjustment of tracking.
-Package microtype Info: No adjustment of spacing.
-Package microtype Info: No adjustment of kerning.
+Package microtype Info: No adjustment of interword spacing.
+Package microtype Info: No adjustment of character kerning.
 
-(/home/nickv/.miktex/texmfs/install/tex/latex/microtype/mt-LatinModernRoman.cfg
-File: mt-LatinModernRoman.cfg 2026/02/26 v1.2 microtype config. file: Latin Mod
-ern Roman (RS)
-) (/home/nickv/.miktex/texmfs/install/tex/latex/microtype/mt-cmr.cfg
+(/home/nickv/.miktex/texmfs/install/tex/latex/microtype/mt-cmr.cfg
 File: mt-cmr.cfg 2013/05/19 v2.2 microtype config. file: Computer Modern Roman 
 (RS)
 )
@@ -572,8 +594,7 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
 ) [1
 
-]
-(report.toc)
+{/home/nickv/.miktex/texmfs/data/fonts/map/pdftex/pdftex.map}] (report.toc)
 \tf@toc=\write4
 \openout4 = `report.toc'.
 
@@ -584,26 +605,75 @@ Package hyperref Info: bookmark level for unknown algorithm defaults to 0 on in
 put line 107.
  [3
 
-] [4]
-Package microtype Info: Loading generic protrusion settings for font family
-(microtype)             `lmtt' (encoding: TU).
-(microtype)             For optimal results, create family-specific settings.
-(microtype)             See the microtype manual for details.
- [5] [6] [7] [8] [9] (report.aux)
+]
+[4] [5] [6] [7] [8]
+Overfull \hbox (45.32077pt too wide) in paragraph at lines 456--461
+\OT1/cmr/m/n/10.95 (-20) We eval-u-ate both poli-cies on the same double-pendul
+um swing-up task with the shared \OT1/cmtt/m/n/10.95 evaluate[]methods.py
+ []
+
+<plots_comp_bc_diffusion/metrics_comparison.png, id=172, 1156.32pt x 650.43pt>
+File: plots_comp_bc_diffusion/metrics_comparison.png Graphic file (type png)
+<use plots_comp_bc_diffusion/metrics_comparison.png>
+Package pdftex.def Info: plots_comp_bc_diffusion/metrics_comparison.png  used o
+n input line 486.
+(pdftex.def)             Requested size: 460.935pt x 259.27415pt.
+[9]
+<plots_comp_bc_diffusion/robustness_vs_noise.png, id=181, 578.16pt x 361.35pt>
+File: plots_comp_bc_diffusion/robustness_vs_noise.png Graphic file (type png)
+<use plots_comp_bc_diffusion/robustness_vs_noise.png>
+Package pdftex.def Info: plots_comp_bc_diffusion/robustness_vs_noise.png  used 
+on input line 504.
+(pdftex.def)             Requested size: 331.87375pt x 207.42175pt.
+ [10 <./plots_comp_bc_diffusion/metrics_comparison.png> <./plots_comp_bc_diffus
+ion/robustness_vs_noise.png>]
+<plots_comp_bc_diffusion/example_states.png, id=192, 1084.05pt x 650.43pt>
+File: plots_comp_bc_diffusion/example_states.png Graphic file (type png)
+<use plots_comp_bc_diffusion/example_states.png>
+Package pdftex.def Info: plots_comp_bc_diffusion/example_states.png  used on in
+put line 524.
+(pdftex.def)             Requested size: 460.935pt x 276.56306pt.
+<plots_comp_bc_diffusion/example_controls.png, id=193, 1084.05pt x 325.215pt>
+File: plots_comp_bc_diffusion/example_controls.png Graphic file (type png)
+<use plots_comp_bc_diffusion/example_controls.png>
+Package pdftex.def Info: plots_comp_bc_diffusion/example_controls.png  used on 
+input line 531.
+(pdftex.def)             Requested size: 460.935pt x 138.28152pt.
+ [11 <./plots_comp_bc_diffusion/example_states.png> <./plots_comp_bc_diffusion/
+example_controls.png>] [12] (report.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-03-20>
  ***********
 Package rerunfilecheck Info: File `report.out' has not changed.
-(rerunfilecheck)             Checksum: C805B2D90FB16B8A093F678D1C158BC6;2782.
+(rerunfilecheck)             Checksum: 21EB7A8E7F3AE09202BE710982EEC614;3444.
  ) 
 Here is how much of TeX's memory you used:
- 15912 strings out of 404750
- 249937 string characters out of 5477711
- 890928 words of memory out of 5000000
- 44497 multiletter control sequences out of 15000+600000
- 634394 words of font info for 80 fonts, out of 8000000 for 9000
+ 16765 strings out of 469603
+ 264535 string characters out of 5466555
+ 900833 words of memory out of 5000000
+ 45201 multiletter control sequences out of 15000+600000
+ 641678 words of font info for 147 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 72i,12n,79p,1057b,489s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 75i,12n,79p,1057b,600s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ </home/nickv/.miktex/texmfs/data/fonts/pk/ljfour/jknappen/ec/dpi600/tcrm1095
+.pk></home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmbx10.p
+fb></home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmbx12.pf
+b></home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmex10.pfb
+></home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi10.pfb>
+</home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi8.pfb></
+home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmr10.pfb></ho
+me/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmr12.pfb></home
+/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmr8.pfb></home/ni
+ckv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmr9.pfb></home/nickv
+/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy10.pfb></home/nickv/
+.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy8.pfb></home/nickv/.m
+iktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmti10.pfb></home/nickv/.mi
+ktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmtt10.pfb></home/nickv/.mik
+tex/texmfs/install/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
+Output written on report.pdf (12 pages, 677773 bytes).
+PDF statistics:
+ 283 PDF objects out of 1000 (max. 8388607)
+ 56 named destinations out of 1000 (max. 500000)
+ 28341 words of extra memory for PDF output out of 29859 (max. 10000000)
 
-Output written on report.xdv (9 pages, 180816 bytes).
