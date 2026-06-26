@@ -11,7 +11,7 @@
   "n_val_traj": 83,
   "n_test_traj": 83,
   "epochs_completed": 400,
-  "final_train_loss": 0.03396417022964289,
-  "final_val_loss": 0.041544177878868244,
-  "test_loss": 0.04398128578302242
+  "final_train_loss": 0.03990936364075076,
+  "final_val_loss": 0.04917527756776881,
+  "test_loss": 0.050129159068524914
 }

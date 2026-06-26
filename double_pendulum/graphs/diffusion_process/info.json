@@ -5,6 +5,6 @@
   "stochastic": false,
   "horizon": 10,
   "timesteps": 20,
-  "reconstruction_mse_normalized": 4.9565232984605245e-06,
+  "reconstruction_mse_normalized": 3.712341367645422e-06,
   "denorm_units": false
 }

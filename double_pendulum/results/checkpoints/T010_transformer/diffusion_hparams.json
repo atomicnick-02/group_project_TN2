@@ -1,0 +1,42 @@
+{
+  "arch": "transformer",
+  "net_kwargs": {
+    "horizon": 10,
+    "action_dim": 2,
+    "cond_dim": 30,
+    "d_model": 128,
+    "n_heads": 4,
+    "n_layers": 2,
+    "dim_feedforward": 256,
+    "dropout": 0.0
+  },
+  "timesteps": 10,
+  "epochs": 400,
+  "batch_size": 256,
+  "learning_rate": 0.0001,
+  "seed": 42,
+  "k": 4,
+  "horizon": 10,
+  "nx": 4,
+  "nx_feat": 6,
+  "nu": 2,
+  "use_goal": true,
+  "use_angular_features": true,
+  "cond_dim": 30,
+  "hold_steps": 0,
+  "split_ratios": [
+    0.7,
+    0.15,
+    0.15
+  ],
+  "n_train_traj": 387,
+  "n_val_traj": 83,
+  "n_test_traj": 83,
+  "n_params": 320642,
+  "warmstart": null,
+  "final_train_loss": 0.03990936364075076,
+  "final_val_loss": 0.04917527756776881,
+  "test_loss": 0.050129159068524914,
+  "checkpoint": "double_pendulum/results/checkpoints/T010_transformer/diffusion.pt",
+  "device": "cuda"
+}

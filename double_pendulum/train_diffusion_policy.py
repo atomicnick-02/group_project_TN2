@@ -70,7 +70,7 @@ SEED         = 42
 HOLD_STEPS   = 0
 
 # MLP-specific
-MLP_HIDDEN   = 256
+MLP_HIDDEN   = 512
 
 # Transformer-specific
 TF_D_MODEL   = 128

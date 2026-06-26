@@ -422,6 +422,54 @@ def make_plots(bc_df, diff_df, summary, rob, bc_ex, diff_ex, plots_dir, dt_contr
     print(f"Plots -> {plots_dir}")
 
 
+# ── Random-initial-position stress battery ───────────────────────────────────
+def run_random_init_battery(name, device, paths, out_root, n_runs, noise_sigma,
+                            max_steps, dt_control, hold_steps, angle_tol, vel_tol,
+                            seed, compile_diff=True):
+    """
+    Stress test: `n_runs` swing-ups from FULLY RANDOM initial joint positions
+    (uniform in [-pi, pi]) under a fixed heavy observation noise (`noise_sigma`),
+    to estimate a success rate well outside the near-hanging-down start the
+    policies were trained on. Returns the per-trial metrics DataFrame.
+    """
+    print(f"\n=== {name.upper()} : random-init battery "
+          f"(n={n_runs}, noise={noise_sigma}, device={device}) ===")
+    ctrl = build_controller(name, device, paths, compile_diff=compile_diff)
+    env  = DoublePendulumEnv(render_mode=None, frame_skip=1)
+
+    rand_dir = out_root / name / "random_init"
+    rand_dir.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    for trial in range(n_runs):
+        # deterministic per (method, trial, seed) so the battery is reproducible
+        rng = np.random.default_rng(
+            abs(hash((name, "random_init", trial, seed))) % (2**32))
+        q0 = rng.uniform(-np.pi, np.pi, size=2)        # fully random start position
+        v0 = rng.normal(0.0, 0.20, size=2)             # small random start velocity
+
+        roll = rollout(env, ctrl, q0, v0, noise_sigma, rng,
+                       max_steps, dt_control, hold_steps, angle_tol, vel_tol)
+        m = compute_metrics(roll, dt_control, hold_steps, angle_tol, vel_tol)
+        m.update({"method": name, "noise_sigma": noise_sigma, "trial": trial,
+                  "q1_0": float(q0[0]), "q2_0": float(q0[1])})
+        rows.append(m)
+
+        save_trajectory_csv(rand_dir / f"trial{trial:02d}.csv", roll)
+        print(f"  [{name}] random trial {trial:02d} | "
+              f"q0=({q0[0]:+.2f},{q0[1]:+.2f}) success={m['success']} "
+              f"IAE={m['iae_angle']:.2f}")
+
+    env.close()
+    df = pd.DataFrame(rows)
+    df.to_csv(out_root / f"{name}_random_init_metrics.csv", index=False)
+    sr = float(df["success"].mean())
+    print(f"  [{name}] random-init success rate = {sr:.1%} "
+          f"({int(df['success'].sum())}/{len(df)})  -> "
+          f"{out_root / f'{name}_random_init_metrics.csv'}")
+    return df
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 def main():
     p = argparse.ArgumentParser(description=__doc__,
@@ -442,6 +490,12 @@ def main():
     p.add_argument("--angle-tol", type=float, default=0.20)
     p.add_argument("--vel-tol", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--n-random", type=int, default=30,
+                   help="random-initial-position stress-test runs per method")
+    p.add_argument("--random-noise", type=float, default=0.25,
+                   help="observation-noise sigma for the random-init battery")
+    p.add_argument("--no-random-init", action="store_true",
+                   help="skip the random-initial-position stress test")
     p.add_argument("--no-compile", action="store_true",
                    help="disable torch.compile for the diffusion model (CUDA only)")
     p.add_argument("--out", default=None,
@@ -453,6 +507,7 @@ def main():
     if args.quick:
         args.n_nominal, args.n_robust = 2, 1
         args.max_steps, args.noise_levels = 150, [0.0, 0.05]
+        args.n_random = 3
 
     if 0.0 not in args.noise_levels:
         args.noise_levels = [0.0] + args.noise_levels
@@ -522,6 +577,40 @@ def main():
                   "training run may be regenerating it.\n"
                   "          Re-run this script once that file exists to get the "
                   "full BC-vs-Diffusion comparison.")
+
+    # 4) random-initial-position stress test: n_random runs per method from
+    #    uniformly random start angles at a fixed heavy noise -> success rate.
+    #    Runs per-method (independent of the combined comparison above).
+    if not args.no_random_init:
+        rand_rows = []
+        for name in ("bc", "diffusion"):
+            ckpt, stats = ckpts[name]
+            missing = [str(p) for p in (ckpt, stats) if not Path(p).exists()]
+            if missing:
+                print(f"\n[skip] {name.upper()} random-init: missing {missing}")
+                continue
+            rdf = run_random_init_battery(
+                name, device, paths, out_root,
+                args.n_random, args.random_noise,
+                args.max_steps, args.dt_control, args.hold_steps,
+                args.angle_tol, args.vel_tol, args.seed,
+                compile_diff=not args.no_compile)
+            rand_rows.append({
+                "method": name,
+                "n_runs": len(rdf),
+                "noise_sigma": args.random_noise,
+                "n_success": int(rdf["success"].sum()),
+                "success_rate": float(rdf["success"].mean()),
+            })
+        if rand_rows:
+            rand_summary = pd.DataFrame(rand_rows)
+            rand_summary.to_csv(out_root / "random_init_success_rate.csv", index=False)
+            pd.set_option("display.float_format", lambda v: f"{v:.4g}")
+            print(f"\n=====  RANDOM-INIT SUCCESS RATE  "
+                  f"(n={args.n_random}, noise={args.random_noise})  =====")
+            print(rand_summary.to_string(index=False))
+            print(f"\nRandom-init summary -> "
+                  f"{out_root / 'random_init_success_rate.csv'}")
 
 
 if __name__ == "__main__":
