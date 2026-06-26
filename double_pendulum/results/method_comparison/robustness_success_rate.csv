@@ -1,0 +1,11 @@
+method,noise_sigma,success_rate
+bc,0.0,1.0
+bc,0.02,1.0
+bc,0.03,1.0
+bc,0.04,0.5
+bc,0.05,0.0
+diffusion,0.0,1.0
+diffusion,0.02,1.0
+diffusion,0.03,0.5
+diffusion,0.04,0.25
+diffusion,0.05,0.0

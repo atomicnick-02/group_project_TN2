@@ -1,0 +1,17 @@
+{
+  "arch": "mlp",
+  "epochs": 400,
+  "seed": 42,
+  "split_ratios": [
+    0.7,
+    0.15,
+    0.15
+  ],
+  "n_train_traj": 387,
+  "n_val_traj": 83,
+  "n_test_traj": 83,
+  "epochs_completed": 220,
+  "final_train_loss": 0.07016943287463283,
+  "final_val_loss": 0.07491791201965392,
+  "test_loss": null
+}

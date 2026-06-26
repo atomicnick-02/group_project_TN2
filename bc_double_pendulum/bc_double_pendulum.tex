@@ -1,0 +1,46 @@
+\section{Behavioural Cloning - Double Pendulum Case}
+\subsection{Behavioural Cloning model and policy training}
+We trained a neural network with a horizon of $7$ actions ahead of the current one. Therefore the policy the agent attempts to learn is:
+
+\begin{equation}
+    \pi = (a_{t:t+7}|s_t)
+\end{equation}
+
+To train our model we first preproccess the expert data and instead of the state $s_t$ we input the feature transformation $\phi(s_t)$. Additionally, we separated the expert data into training and validation data. The training data comprise $90\%$ of the expert data  while testing data comprise $10\%$ of the expert data. We have performed normalisation in both the actions $a_t$ and the velocities $\dot{q}_t$ of the pendulum. In order to train this model we did not utilize test data since we test it in the simulation environment.
+
+The architecture of the NN is depicted in Figure \ref{fig:NN-BC}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\textwidth]{neural network.png}
+    \caption{Architecture of BC policy model for the double pendulum example.}
+    \label{fig:NN-BC}
+\end{figure}
+
+As it shown above the network has an input layer of size $6$ and 4 hidden fully connected layers while the output of the output layer is $16$ which is then reshaped to represent a set of $8$ consecutive actions in the form of a $8 \times 2$ matrix. The activation function of each layer is the hyperbolic tangent ($tanh(x)$). Additionally, in the output of each hidden layer we have added a dropout layer with a dropout rate of $20\%$ which is only active during training. Regarding the training hyperparameters are depicted in Table \ref{tab:bc-hyperparameters}. In Figure \ref{fig:bc-training} the training and test losses are depicted with respect to the training epochs. The training finishes early so as to not overfit to the expert trajectories.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{training_bc.png}
+    \caption{Train and Test loss curves of the BC policy model.}
+    \label{fig:bc-training}
+\end{figure}
+
+\begin{table}[h]
+  \centering
+  \caption{Behavioural Cloning policy model and training hyperparameters (defaults).}\label{tab:bc-hyperparameters}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Symbol} & \textbf{Value} \\
+    \midrule
+    Feature dimension         & ---            & $6$ per state \\
+    Action prediction horizon & $H$            & $8$ \\
+    Optimizer / LR            & ---            & Adam, $10^{-3}$ (cosine) \\
+    Batch size / epochs       & ---            & $512\,/\,400$ \\
+    Loss Function  & --- & MSE\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+
+

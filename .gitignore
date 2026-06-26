@@ -2,5 +2,8 @@
 .urdf
 gripper/assets/ycb/*
 gripper/assets/autodesk/*
-
+*.csv
 __pycache__/
+
+
+ai_project_venv/

@@ -1,0 +1,36 @@
+\contentsline {section}{\numberline {1}Introduction}{3}{section.1}%
+\contentsline {section}{\numberline {2}Behavioural Cloning - Double Pendulum Case}{3}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Behavioural Cloning model and policy training}{3}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Diffusion}{4}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Generating Dataset}{5}{subsection.2.3}%
+\contentsline {subsubsection}{\numberline {2.3.1}Dynamics Model}{6}{subsubsection.2.3.1}%
+\contentsline {subsubsection}{\numberline {2.3.2}Trajectory Optimization}{6}{subsubsection.2.3.2}%
+\contentsline {subsubsection}{\numberline {2.3.3}TVLQR Tracking and Closed-Loop Rollout}{6}{subsubsection.2.3.3}%
+\contentsline {subsubsection}{\numberline {2.3.4}DAgger-Style Coverage}{7}{subsubsection.2.3.4}%
+\contentsline {subsubsection}{\numberline {2.3.5}Dataset Composition}{7}{subsubsection.2.3.5}%
+\contentsline {subsection}{\numberline {2.4}Diffusion Policy Model}{8}{subsection.2.4}%
+\contentsline {subsubsection}{\numberline {2.4.1}Conditioning and Action Representation}{8}{subsubsection.2.4.1}%
+\contentsline {paragraph}{Angular features.}{8}{section*.7}%
+\contentsline {paragraph}{Min--max normalization.}{8}{section*.8}%
+\contentsline {subsubsection}{\numberline {2.4.2}Noise-Prediction Network}{8}{subsubsection.2.4.2}%
+\contentsline {subsubsection}{\numberline {2.4.3}Noise Schedule and Terminal SNR}{9}{subsubsection.2.4.3}%
+\contentsline {subsubsection}{\numberline {2.4.4}Training Tricks}{9}{subsubsection.2.4.4}%
+\contentsline {subsubsection}{\numberline {2.4.5}Inference and Control Tricks}{9}{subsubsection.2.4.5}%
+\contentsline {subsection}{\numberline {2.5}Comparison}{10}{subsection.2.5}%
+\contentsline {subsubsection}{\numberline {2.5.1}Aggregate metrics}{10}{subsubsection.2.5.1}%
+\contentsline {subsubsection}{\numberline {2.5.2}Robustness to observation noise}{11}{subsubsection.2.5.2}%
+\contentsline {subsubsection}{\numberline {2.5.3}Example trajectories}{12}{subsubsection.2.5.3}%
+\contentsline {subsubsection}{\numberline {2.5.4}Diffusion design ablations}{12}{subsubsection.2.5.4}%
+\contentsline {subsubsection}{\numberline {2.5.5}Summary}{14}{subsubsection.2.5.5}%
+\contentsline {section}{\numberline {3}Robotic Manipulation: Cube Stacking}{15}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Overview \& Control Task}{15}{subsection.3.1}%
+\contentsline {subsubsection}{\numberline {3.1.1}Action Space}{15}{subsubsection.3.1.1}%
+\contentsline {subsubsection}{\numberline {3.1.2}State Space}{15}{subsubsection.3.1.2}%
+\contentsline {subsubsection}{\numberline {3.1.3}Training \& Horizon Control Goal}{16}{subsubsection.3.1.3}%
+\contentsline {subsection}{\numberline {3.2}Dataset Overview}{16}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Behavior Cloning Model}{17}{subsection.3.3}%
+\contentsline {subsubsection}{\numberline {3.3.1}Model Architecture}{17}{subsubsection.3.3.1}%
+\contentsline {subsubsection}{\numberline {3.3.2}Training \& Hyperparameters}{17}{subsubsection.3.3.2}%
+\contentsline {subsection}{\numberline {3.4}Testing Environment}{20}{subsection.3.4}%
+\contentsline {subsection}{\numberline {3.5}Evaluation Results}{22}{subsection.3.5}%
+\contentsline {section}{\numberline {4}Conclusion}{26}{section.4}%

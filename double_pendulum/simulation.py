@@ -41,8 +41,11 @@ class DoublePendulumEnv(gym.Env):
 	def reset(self, seed=None, options=None):
 		super().reset(seed=seed)
 		mujoco.mj_resetData(self.model, self.data)
-		self.data.qpos[:] = [0.0, 0.0]
-		self.data.qvel[:] = [0.0, 0.0]
+		# Optional custom initial state via options={"qpos": [...], "qvel": [...]};
+		# defaults to the hanging-down rest state when omitted (unchanged behavior).
+		options = options or {}
+		self.data.qpos[:2] = options.get("qpos", [0.0, 0.0])
+		self.data.qvel[:2] = options.get("qvel", [0.0, 0.0])
 		mujoco.mj_forward(self.model, self.data)
 		return self._get_obs(), {}
 
