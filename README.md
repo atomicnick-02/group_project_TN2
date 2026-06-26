@@ -173,6 +173,9 @@ Run the container:
 ```bash
 sudo docker run -it --gpus all --rm -e DISPLAY=$DISPLAY -e MUJOCO_GL=glx -v /tmp/.X11-unix:/tmp/.X11-unix:rw xaristeidou/cube-stack:latest
 ```
+<br>
+<br>
+
 
 ## Run the environments
 
@@ -212,3 +215,26 @@ StackThree Diffusion (with goal):
 python3 diffusion_policy_env_run.py stack_three_d0 --seed 42 --goal  --no-render --checkpoint ./checkpoints/diffusion_transformer_with_goal_stack_three_d0_best_V2.pth
 ```
 <br>
+<br>
+
+
+## Scripts cheatsheet
+
+| Script | Description |
+|--------|-------------|
+| `diffusion_transformer_model.py` | Defines `TransformerDenoiser` (transformer denoiser with sinusoidal time embedding and state/time token conditioning), `DiffusionScheduler` (linear beta schedule with DDPM/DDIM), and the `DiffusionPolicy` training/sampling wrapper. |
+| `diffusion_policy_train_transformer.py` | Trains the transformer `DiffusionPolicy` with noise-prediction loss, EMA, and AdamW; supports optional goal conditioning (`--goal` appends final-frame cube positions to the state); saves tagged checkpoints (`no_goal` / `with_goal`). |
+| `diffusion_policy_train_transformer_ddim.py` | Trains the transformer `DiffusionPolicy` with DDIM-denoised action MSE as the validation metric (rather than noise loss), giving a direct signal of inference-time action quality. |
+| `diffusion_policy_env_run.py` | Feature-rich transformer-only rollout script; reconstructs the environment from HDF5 metadata for a matched train/test distribution; supports `--goal`, `--seed`, `--checkpoint`, `--no-render`, and `--episodes`; appends results to `rollout_results.csv`. |
+| `behaviour_clone_model.py` | Defines the `BehaviorCloningBaseline` MLP that maps a state vector directly to an 8-step action horizon. |
+| `behaviour_clone_train.py` | Trains the behaviour cloning model with MSE loss; supports combining datasets within the same task family; saves the best checkpoint based on validation loss. |
+| `behaviour_clone_environment_run.py` | Runs trained behaviour clone rollouts in robosuite with receding-horizon control; reports success rate, jitter, path effort, joint cost, and gripper-cube approach alignment. |
+| `dataset_loader.py` | Provides four dataset classes for sliding-window HDF5 demonstrations: `ShortHorizonRoboticsDataset` (Stack 32D), `ShortHorizonRoboticsDatasetThree` (StackThree 48D), and their goal-conditioned variants that append final-frame cube positions (38D / 57D). |
+| `state_utils.py` | Builds the state vector from raw observation arrays (training) or robosuite obs dicts (inference) for both the 2-cube and 3-cube tasks; also provides `synthesize_stack_goal` / `synthesize_stack_three_goal` for goal-conditioned inference. |
+| `normalization_utils.py` | Provides `normalize_actions` / `unnormalize_actions` helpers and `NormalizationResults` with precomputed action bounds for all four datasets. |
+| `metric_utils.py` | Tracks per-episode trajectory quality metrics: mean jitter, total path effort, total joint cost, and gripper-cube approach alignment (recorded when the gripper is within 0.10 m of the cube). |
+| `compute_dataset_metrics.py` | Computes expert-demonstration mean jitter, total path effort, and joint cost from an HDF5 dataset for direct comparison against model rollout metrics. |
+| `compute_dataset_statistics.py` | Scans an HDF5 dataset and prints per-dimension action min/max values for copy-pasting into `normalization_utils.py`. |
+| `plot_results.py` | Reads `rollout_results.csv` and `behavior_cloning_results.csv`; generates comparison plots of success rate, jitter, path effort, and joint cost per task; saves PNGs to `figures/`. |
+| `dataset_download.py` | Downloads MimicGen HDF5 datasets from Hugging Face for a specified task and difficulty level. |
+| `inspect_dataset.py` | Prints demonstration count, trajectory length, observation shapes, and sample values from an HDF5 dataset file. |
