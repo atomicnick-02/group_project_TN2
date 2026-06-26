@@ -70,8 +70,7 @@ in the \textbf{double pendulum swingup task} and the \textbf{stacking problem}.
 
 \section{Behavioural Cloning - Double Pendulum Case}
 \subsection{Behavioural Cloning model and policy training}
-We trained a neural network with a horizon of $7$ actions ahead of the current one. 
-Therefore the policy the agent attempts to learn is:
+We trained a neural network with a horizon of $7$ actions ahead of the current one. Therefore the policy the agent attempts to learn is:
 
 \begin{equation}
     \pi = (a_{t:t+7}|s_t)
@@ -191,7 +190,7 @@ when stabilizing the unstable upright equilibrium.
 
 \subsection{Generating Dataset}
 Both learning methods are trained by imitation, so they are only ever as good as
-the expert demonstrations they are shown. We, therefore, generate the dataset with a
+the expert demonstrations they are shown. We therefore generate the dataset with a
 classical optimal-control pipeline: we (i) define a physics model of the double
 pendulum, (ii) solve a trajectory-optimization problem for a nominal swing-up,
 (iii) wrap that nominal in a time-varying LQR (TVLQR) feedback controller, and
@@ -201,7 +200,7 @@ both the behavioural-cloning and diffusion-policy models clone.
 
 \subsubsection{Dynamics Model}
 The state is $x = [q_1, q_2, \dot{q}_1, \dot{q}_2]^\top$, where $q_1$ is the
-shoulder and $q_2$ the elbow angle, and the control $u = [u_1, u_2]^\top$ consists of
+shoulder and $q_2$ the elbow angle, and the control $u = [u_1, u_2]^\top$ collects
 the two joint torques. We use $q_1 = 0$ for the stable hanging-down configuration
 and $q_1 = \pi$ for the upright goal. The planar two-link equations of motion are
 \begin{equation}
@@ -212,7 +211,7 @@ with mass matrix $M(q)$, Coriolis/centrifugal matrix $C(q,\dot{q})$, gravity
 vector $G(q)$, viscous damping $b$ and Coulomb friction $f$. The non-smooth dry
 friction $\operatorname{sign}(\dot{q})$ is replaced by a smooth
 $\tanh(\dot{q}/\epsilon)$ ($\epsilon = 0.05$ rad/s) so the term is differentiable
-for the gradient-based solver. Crucially, every physical parameters (masses,
+for the gradient-based solver. Crucially, every physical parameter (masses,
 lengths, link inertias, damping and friction) is read \emph{directly} from the
 MuJoCo model file \file{dp.xml}, so the planner and the simulator used for
 deployment describe the exact same system and cannot silently drift apart.
@@ -228,22 +227,18 @@ $z = [x_0, \ldots, x_N, u_0, \ldots, u_N]$, and we minimize the quadratic cost
        + (x_N - x_g)^\top Q_f\,(x_N - x_g),
 \end{equation}
 subject to the trapezoidal collocation (dynamics) defects, the boundary
-conditions, and the actuator torque limits shown below:
+conditions, and the actuator torque limits:
 \begin{align}
   x_{k+1} - x_k - \tfrac{\Delta t}{2}\big(f(x_k,u_k) + f(x_{k+1},u_{k+1})\big) &= 0,
     \quad k = 0,\ldots,N-1, \\
   x_0 = x_{\text{init}}, \quad x_N &= x_g = [\pi, 0, 0, 0]^\top, \\
   |u_k| &\le \tau_{\max}.
 \end{align}
-The constraint Jacobian is obtained by automatic differentiation (JAX) while the objective gradient
-is supplied analytically, and the compiled functions are reused across solves. As a check, the
-
-optimized torques are replayed open-loop in the MuJoCo simulator: the simulated final state lands
-on the planned upright, confirming that the planner and the simulator describe the same system.
-The weighting matrices Q, R trade off tracking accuracy against control effort. We solve for a
-single nominal swing-up and reuse it for every rollout; the variety in the dataset comes not from a
-family of optimal trajectories but from rolling the tracking controller out from many randomized
-initial conditions, with the exploration noise described below..
+The objective gradient and the constraint Jacobian are obtained by automatic
+differentiation (JAX), and the problem is compiled once and reused across solves.
+The weighting matrices $Q, R$ trade off tracking accuracy against control effort;
+sweeping them, together with the peak-torque limit and the initial condition,
+produces a diverse family of nominal swing-ups rather than a single trajectory.
 
 \subsubsection{TVLQR Tracking and Closed-Loop Rollout}
 A nominal trajectory $(x^\ast, u^\ast)$ on its own is open-loop and brittle: applied
@@ -847,7 +842,7 @@ The evaluation of the models is performed in the MuJoCo simulation environment u
     \item \textbf{horizon (500):} The maximum rollout steps per episode, limiting the simulation time to $25$ seconds ($500 \text{ steps} \times 0.05 \text{ s/step}$).
 \end{itemize}
 
-To extract the results, 100 independent evaluation episodes were executed for each model and environment. At each time step, the predicted actions are executed and it is checked whether cube stacking has been achieved (success state). The simulation setups for both tasks are shown in Figure~\ref{fig:stack_envs}.
+To extract the results, 50 independent evaluation episodes were executed for each model and environment. At each time step, the predicted actions are executed and it is checked whether cube stacking has been achieved (success state). The simulation setups for both tasks are shown in Figure~\ref{fig:stack_envs}.
 \begin{figure}[htbp]
   \centering
   \begin{subfigure}{0.4\textwidth}
@@ -903,24 +898,24 @@ Stack & BC & 1 & 13.0\% & 0.01170 / 0.01029 & 2073.22 / 2031.59 & 5515.72 / 5547
  &  & 2 & 11.0\% & 0.01691 / 0.01577 & 934.09 / 908.48 & 2714.83 / 2768.91 \\ \cline{3-7}
  &  & 4 & 73.0\% & 0.01165 / 0.01099 & 269.30 / 171.67 & 765.77 / 484.45 \\ \cline{3-7}
  &  & 8 & \textbf{93.0\%} & \textbf{0.00676 / 0.00623} & \textbf{103.05 / 82.74} & \textbf{268.03 / 218.65} \\ \cline{2-7}
- & Diffusion & 1 & 4.0\% & 0.06578 / 0.06904 & 1605.12 / 1457.15 & 7304.82 / 7175.33 \\ \cline{3-7}
- &  & 2 & \textbf{98.0\%} & 0.02817 / 0.02687 & 431.17 / 337.34 & 1270.82 / 1052.46 \\ \cline{3-7}
- &  & 4 & 96.0\% & 0.02625 / 0.02446 & 196.55 / 173.60 & 591.81 / 517.00 \\ \cline{3-7}
- &  & 8 & \textbf{98.0\%} & \textbf{0.02361 / 0.02290} & \textbf{93.93 / 88.48} & \textbf{278.56 / 260.22} \\ \hline
+ & Diffusion & 1 & 8.0\% & 0.05197 / 0.05309 & 1713.39 / 1393.61 & 7210.27 / 6949.14 \\ \cline{3-7}
+ &  & 2 & 56.0\% & 0.04638 / 0.04923 & 614.44 / 516.66 & 2567.56 / 2626.39 \\ \cline{3-7}
+ &  & 4 & \textbf{100.0\%} & 0.03059 / 0.02780 & 202.64 / 176.12 & 650.03 / 569.80 \\ \cline{3-7}
+ &  & 8 & 98.0\% & \textbf{0.02154 / 0.02063} & \textbf{96.91 / 86.39} & \textbf{292.41 / 263.00} \\ \hline
 StackThree & BC & 1 & 2.0\% & 0.00468 / 0.00438 & 2131.12 / 2143.83 & 6189.94 / 6207.12 \\ \cline{3-7}
  &  & 2 & 1.0\% & 0.00514 / 0.00529 & 1052.04 / 998.69 & 3104.60 / 3068.19 \\ \cline{3-7}
  &  & 4 & 25.0\% & 0.00539 / 0.00512 & 462.80 / 438.15 & 1389.38 / 1398.30 \\ \cline{3-7}
  &  & 8 & \textbf{56.0\%} & \textbf{0.00366 / 0.00374} & \textbf{232.03 / 202.94} & \textbf{652.26 / 579.43} \\ \cline{2-7}
- & Diffusion & 1 & 8.0\% & 0.04743 / 0.04760 & 2017.02 / 1977.88 & 7646.84 / 7767.36 \\ \cline{3-7}
- &  & 2 & 62.0\% & 0.03880 / 0.04074 & 975.31 / 949.27 & 3382.48 / 3370.43 \\ \cline{3-7}
- &  & 4 & 66.0\% & 0.02874 / 0.02942 & 511.65 / 424.82 & 1584.73 / 1353.55 \\ \cline{3-7}
- &  & 8 & \textbf{74.0\%} & \textbf{0.02595 / 0.02631} & \textbf{240.11 / 212.66} & \textbf{743.77 / 642.23} \\ \hline
+ & Diffusion & 1 & 16.0\% & 0.02755 / 0.03086 & 2155.16 / 2126.18 & 7617.41 / 7847.57 \\ \cline{3-7}
+ &  & 2 & 36.0\% & 0.02332 / 0.01884 & 1124.72 / 1000.23 & 3645.99 / 3823.49 \\ \cline{3-7}
+ &  & 4 & \textbf{70.0\%} & 0.01904 / 0.01586 & 470.53 / 447.22 & 1520.41 / 1388.01 \\ \cline{3-7}
+ &  & 8 & \textbf{70.0\%} & \textbf{0.01417 / 0.01391} & \textbf{238.20 / 217.04} & \textbf{740.25 / 644.47} \\ \hline
 \end{tabular}
 \end{table}
 
-Both models benefit from longer execution horizons, with $H=8$ consistently yielding the highest success rates and lowest effort scores. However, the Diffusion Policy demonstrates a clear advantage in task success: on Stack it achieves $98.0\%$ at $H=2$ and maintains this level through $H=8$, whereas BC requires the full horizon ($H=8$) to reach $93.0\%$. On the more challenging StackThree task, the diffusion model reaches $74.0\%$ at $H=8$ compared to BC's $56.0\%$, and already attains $62.0\%$ at $H=2$ where BC succeeds only $1.0\%$ of the time. This robustness to replanning frequency is a practical advantage, as the policy can adapt more quickly to environmental changes without sacrificing reliability. In terms of trajectory quality, BC produces smoother action sequences with lower jitter values across all configurations (e.g.\ $0.00676$ vs.\ $0.02361$ at $H=8$ on Stack), which is expected given its deterministic regression nature compared to the stochastic denoising process. Despite this, the diffusion model's higher jitter does not impair task completion, as confirmed by its superior success rates. Path effort and joint cost are comparable between the two models at $H=8$, with the diffusion model achieving slightly lower path effort on Stack ($93.93$ vs.\ $103.05$) while showing marginally higher joint cost on StackThree ($743.77$ vs.\ $652.26$), likely due to additional corrective movements needed to complete the more complex three-cube stacking sequence. At low execution horizons ($H=1$), both models struggle: BC suffers from compounding errors and inability to properly trigger gripper state changes, while the diffusion model produces excessively noisy trajectories with high jitter and effort, indicating that single-step execution disrupts the temporal coherence of the generated action plans. These trends are visualized in Figure~\ref{fig:stack_metrics}, which plots each metric against the execution horizon $H$ for the Stack task.
+Both models benefit from longer execution horizons, with $H=8$ consistently yielding high success rates and the lowest effort scores. However, the Diffusion Policy demonstrates a clear advantage in task success: on Stack it reaches $100.0\%$ at $H=4$ and $98.0\%$ at $H=8$, whereas BC peaks at only $93.0\%$ (at $H=8$). On the more challenging StackThree task, the diffusion model attains $70.0\%$ at both $H=4$ and $H=8$ compared to BC's $56.0\%$, and already reaches $36.0\%$ at $H=2$ where BC succeeds only $1.0\%$ of the time. This robustness to replanning frequency is a practical advantage, as the policy can adapt more quickly to environmental changes without sacrificing reliability. In terms of trajectory quality, BC produces smoother action sequences with lower jitter values across all configurations (e.g.\ $0.00676$ vs.\ $0.02154$ at $H=8$ on Stack), which is expected given its deterministic regression nature compared to the stochastic denoising process. Despite this, the diffusion model's higher jitter does not impair task completion, as confirmed by its superior success rates. Path effort and joint cost are comparable between the two models at $H=8$, with the diffusion model achieving slightly lower path effort on Stack ($96.91$ vs.\ $103.05$) while showing marginally higher joint cost on StackThree ($740.25$ vs.\ $652.26$), likely due to additional corrective movements needed to complete the more complex three-cube stacking sequence. At low execution horizons ($H=1$), both models struggle: BC suffers from compounding errors and inability to properly trigger gripper state changes, while the diffusion model produces excessively noisy trajectories with high jitter and effort, indicating that single-step execution disrupts the temporal coherence of the generated action plans. These trends are visualized in Figure~\ref{fig:stack_metrics} for the Stack task and Figure~\ref{fig:stack_three_metrics} for StackThree, which plot each metric against the execution horizon $H$.
 
-\begin{figure}[H]
+\begin{figure}[htbp]
   \centering
   \begin{subfigure}{0.49\textwidth}
     \centering
@@ -954,7 +949,42 @@ Both models benefit from longer execution horizons, with $H=8$ consistently yiel
   \label{fig:stack_metrics}
 \end{figure}
 
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_figures/stack_three_success_comparison.png}
+    \caption{Success rate.}
+    \label{fig:stack_three_success}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_figures/stack_three_jitter_comparison.png}
+    \caption{Trajectory jitter.}
+    \label{fig:stack_three_jitter}
+  \end{subfigure}
+
+  \vspace{0.6em}
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_figures/stack_three_effort_comparison.png}
+    \caption{Path effort.}
+    \label{fig:stack_three_effort}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{images/part2/stack_figures/stack_three_joint_cost_comparison.png}
+    \caption{Joint cost.}
+    \label{fig:stack_three_joint_cost}
+  \end{subfigure}
+  \caption{Behavior Cloning vs.\ Diffusion Policy on the StackThree task across execution horizons $H \in \{1, 2, 4, 8\}$, for each of the four evaluation metrics.}
+  \label{fig:stack_three_metrics}
+\end{figure}
+
 % ══════════════════════════════════════════════════════════════════════════════
+\newpage
 \section{Conclusion}
 We compared two imitation-learning methods --- behavioural cloning (BC) and a
 diffusion policy --- on two tasks: the double-pendulum swing-up and cube stacking
@@ -995,6 +1025,7 @@ on the pendulum. In short, BC is the simpler and cheaper choice for smooth contr
 small, balance-type problems, and the diffusion policy is the better choice for larger
 tasks such as manipulation, where the same job can be done in several different ways.
 
+\clearpage
 \begin{thebibliography}{9}
 \bibitem{mandlekar2023mimicgen}
 A. Mandlekar, S. Nasiriany, B. Wen, I. Akinola, Y. Narang, L. Fan, Y. Zhu, and D. Fox, ``MimicGen: A Data Generation System for Scalable Robot Learning using Human Demonstrations,'' in \emph{7th Annual Conference on Robot Learning}, 2023.
