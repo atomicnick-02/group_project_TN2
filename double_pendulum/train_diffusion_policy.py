@@ -58,7 +58,7 @@ H            = 10             # action prediction horizon
 USE_GOAL     = True          # append goal features to conditioning vector
 X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)  # upright
 
-TIMESTEPS    = 10
+TIMESTEPS    = 20
 EPOCHS       = 200
 BATCH_SIZE   = 256
 LR           = 1e-4
@@ -376,6 +376,9 @@ def load_warmstart(network, path, arch, cond_dim):
 
 # ── Train ────────────────────────────────────────────────────────────────────
 def main():
+    # Declared up front (before the argparse defaults read these names) so the
+    # later reassignment from CLI args is legal; see the override block below.
+    global TIMESTEPS, H, K, LR, TF_D_MODEL, TF_HEADS, TF_LAYERS, TF_FF, MLP_HIDDEN
     ap = argparse.ArgumentParser()
     ap.add_argument("--arch", choices=["mlp", "transformer"], default="transformer",)
     ap.add_argument("--epochs", type=int, default=EPOCHS)
@@ -390,7 +393,35 @@ def main():
                          "'auto' (default) = the most recent diffusion checkpoint "
                          "(falls back to from-scratch if none exists); a path = that "
                          "checkpoint; 'none'/'off' = always train from scratch")
+    # ── Sweep knobs (override the module defaults from the CLI) ──
+    ap.add_argument("--timesteps", type=int, default=TIMESTEPS,
+                    help="diffusion denoising steps -- the main success-rate / "
+                         "inference-cost knob")
+    ap.add_argument("--horizon", type=int, default=H, help="action prediction horizon H")
+    ap.add_argument("--k", type=int, default=K, help="observation-history length")
+    ap.add_argument("--lr", type=float, default=LR, help="learning rate")
+    ap.add_argument("--tf-d-model", type=int, default=TF_D_MODEL,
+                    help="transformer width (must be divisible by --tf-heads)")
+    ap.add_argument("--tf-heads", type=int, default=TF_HEADS, help="transformer attention heads")
+    ap.add_argument("--tf-layers", type=int, default=TF_LAYERS, help="transformer encoder layers")
+    ap.add_argument("--tf-ff", type=int, default=TF_FF, help="transformer feed-forward dim")
+    ap.add_argument("--mlp-hidden", type=int, default=MLP_HIDDEN, help="MLP hidden width")
     args = ap.parse_args()
+
+    # Push CLI overrides into the module globals so every helper that reads them
+    # (build_network, the policy/scheduler, build_checkpoint, the hparams sidecar)
+    # sees one consistent set of values. The two helpers that bind K/H as default
+    # args (dataset windowing, build_network's horizon) are passed K/H explicitly
+    # at their call sites below, since default args ignore later global reassignment.
+    TIMESTEPS  = args.timesteps
+    H          = args.horizon
+    K          = args.k
+    LR         = args.lr
+    TF_D_MODEL = args.tf_d_model
+    TF_HEADS   = args.tf_heads
+    TF_LAYERS  = args.tf_layers
+    TF_FF      = args.tf_ff
+    MLP_HIDDEN = args.mlp_hidden
 
     torch.manual_seed(SEED)
     np.random.seed(SEED)
@@ -408,7 +439,7 @@ def main():
           f"{len(test_keys)} test trajectories "
           f"({SPLIT_RATIOS[0]:.0%}/{SPLIT_RATIOS[1]:.0%}/{SPLIT_RATIOS[2]:.0%})")
 
-    dataset = DiffusionPolicyDataset(H5_PATH, keys=train_keys)
+    dataset = DiffusionPolicyDataset(H5_PATH, keys=train_keys, k=K, horizon=H)
     dataset.save_stats(STATS_PATH)
     print(f"Train dataset: {len(dataset)} windows | cond_dim={dataset.cond_dim} "
           f"| action_seq=({H},{NU})")
@@ -418,7 +449,7 @@ def main():
     def _make_loader(keys, name):
         if not keys:
             return None
-        ds = DiffusionPolicyDataset(H5_PATH, keys=keys, stats=dataset.get_stats())
+        ds = DiffusionPolicyDataset(H5_PATH, keys=keys, stats=dataset.get_stats(), k=K, horizon=H)
         print(f"{name} dataset: {len(ds)} windows")
         return DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False,
                           num_workers=2, pin_memory=(DEVICE == "cuda"))
@@ -430,12 +461,13 @@ def main():
                         num_workers=2, drop_last=True, pin_memory=(DEVICE == "cuda"))
 
     scheduler = Scheduler(num_steps=TIMESTEPS, device=DEVICE)
-    network, net_kwargs = build_network(args.arch, dataset.cond_dim)
+    network, net_kwargs = build_network(args.arch, dataset.cond_dim, horizon=H)
 
     # Warm start: load weights into the freshly built network BEFORE wrapping it
     # in DiffusionPolicy, so the policy's EMA copy (a deepcopy made at init) also
     # starts from the checkpoint instead of random init. Default is 'auto' = pick
     # up the last previous checkpoint; 'none'/'off' forces a from-scratch run.
+    warmstart_used = None
     if args.warmstart and args.warmstart.lower() not in ("none", "off"):
         if args.warmstart == "auto":
             ws = find_last_checkpoint(args.arch)
@@ -447,6 +479,7 @@ def main():
                 raise SystemExit(f"--warmstart: no checkpoint found at '{ws}'")
         if ws is not None:
             load_warmstart(network, ws, args.arch, dataset.cond_dim)
+            warmstart_used = str(ws)
             print(f"Warm-start: initialized '{args.arch}' weights from {ws}")
 
     policy = DiffusionPolicy(
@@ -511,6 +544,45 @@ def main():
     # controller; eval loads model_state unchanged).
     torch.save(build_checkpoint(policy, args.arch, net_kwargs, dataset.cond_dim), ckpt)
     print(f"Saved checkpoint to {ckpt}")
+
+    # ── Sidecar files next to the weights: hyperparameters + normalization ──
+    # The hparams JSON makes every checkpoint self-describing for the sweep
+    # comparison (compare_diffusion_models.py reads it to label each run by the
+    # settings that produced it). The stats copy makes the checkpoint
+    # self-contained: the shared results/norm_stats.json is OVERWRITTEN by each
+    # training run, so a per-checkpoint copy lets old models still be evaluated
+    # with the exact normalization they were trained on.
+    hparams = {
+        "arch": args.arch,
+        "net_kwargs": net_kwargs,
+        "timesteps": TIMESTEPS,
+        "epochs": args.epochs,
+        "batch_size": BATCH_SIZE,
+        "learning_rate": LR,
+        "seed": SEED,
+        "k": K, "horizon": H, "nx": NX, "nx_feat": NX_FEAT, "nu": NU,
+        "use_goal": USE_GOAL,
+        "use_angular_features": True,
+        "cond_dim": dataset.cond_dim,
+        "hold_steps": HOLD_STEPS,
+        "split_ratios": list(SPLIT_RATIOS),
+        "n_train_traj": len(train_keys),
+        "n_val_traj": len(val_keys),
+        "n_test_traj": len(test_keys),
+        "n_params": int(sum(p.numel() for p in network.parameters())),
+        "warmstart": warmstart_used,
+        "final_train_loss": _nan2none(history[-1][1] if history else float("nan")),
+        "final_val_loss":   _nan2none(final_val),
+        "test_loss":        _nan2none(test_loss),
+        "checkpoint": str(ckpt),
+        "device": DEVICE,
+    }
+    hparams_path = ckpt.with_name(f"{ckpt.stem}_hparams.json")
+    with open(hparams_path, "w") as fp:
+        json.dump(hparams, fp, indent=2)
+    stats_sidecar = ckpt.with_name(f"{ckpt.stem}_stats.json")
+    dataset.save_stats(stats_sidecar)
+    print(f"Saved hyperparameters to {hparams_path} and norm stats to {stats_sidecar}")
 
 
 if __name__ == "__main__":

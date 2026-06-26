@@ -433,7 +433,7 @@ def main():
     p.add_argument("--n-robust", type=int, default=4,
                    help="trials per non-zero noise level")
     p.add_argument("--noise-levels", type=float, nargs="+",
-                   default=[0.0, 0.025, 0.05, 0.10],
+                   default=[0.0, 0.02, 0.03, 0.04, 0.05],
                    help="observation-noise sigmas to sweep (must include 0.0)")
     p.add_argument("--max-steps", type=int, default=500,
                    help="control steps per trial (dt_control=0.05 -> 25 s)")
