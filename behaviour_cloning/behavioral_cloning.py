@@ -1,21 +1,3 @@
-"""
-Train the conditional Diffusion Policy on the double-pendulum expert
-trajectories produced by generate_dataset.py.
-
-The full network spec (class name + hyperparameters) is saved into the
-checkpoint's "config", so the evaluation script can rebuild the exact same
-network with no manual edits.
-
-Pipeline:
-  1. Load expert_trajectories.h5  (groups traj_*, each with states (T,4), actions (T,2))
-  2. Slice every trajectory into (cond, action_seq) windows:
-        cond       = last k state features   -> (k*NX_FEAT,)  [+ NX_FEAT if USE_GOAL]
-        action_seq = next H actions          -> (H, nu)
-  3. States are converted to angular features [sin(q1),cos(q1),sin(q2),cos(q2),dq1_n,dq2_n]
-     to avoid angle-wrap discontinuities. Velocities are min-max normalized to [-1,1].
-     Actions are min-max normalized to [-1,1]. Stats saved for inference.
-  4. Train via the DiffusionPolicy class (noise-prediction MSE).
-"""
 
 import os
 import json
@@ -33,9 +15,10 @@ import matplotlib.pyplot as plt
 H5_PATH      = "C:\\Users\\theod\\Downloads\\group_project_TN2-pendulum\\group_project_TN2-pendulum\\double_pendulum\\results/expert_trajectories.h5"
 OUT_DIR      = "C:\\Users\\theod\\Downloads\\group_project_TN2-pendulum\\group_project_TN2-pendulum\\double_pendulum\\results_bc"
 # CKPT_PATH    = os.path.join(OUT_DIR, "diffusion_policy.pt")
-STATS_PATH   = os.path.join(OUT_DIR, "norm_stats.json")
+MODEL_N = 6#3 current best
+STATS_PATH   = os.path.join(OUT_DIR, f"norm_stats_{MODEL_N}.json")
 CKPT_DIR     = os.path.join(OUT_DIR, "checkpoints")  # periodic per-epoch snapshots
-MODEL_N = 3
+
 CKPT_PATH = os.path.join(OUT_DIR, f"bc_policy_{MODEL_N}.pt")
 CKPT_EVERY   = 20                                    # save a checkpoint every N epochs
 LOG_F_PATH = os.path.join(OUT_DIR, f"training_log_{MODEL_N}.csv")
@@ -50,16 +33,13 @@ X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)  # upright
 TIMESTEPS    = 100
 EPOCHS       = 400
 BATCH_SIZE   = 512
-LR           = 1e-4
+LR           = 1e-3
 SEED         = 42
 # Real upright-hold rollouts now come from generate_tvlqr_dataset.py (--n-hold),
 # which capture the deviation->corrective-torque map. The old synthetic hack just
 # repeated each trajectory's final state/action, teaching the exact fixed point
 # but NOT how to recover -- so it's disabled (0) in favor of the real data.
 HOLD_STEPS   = 0
-
-# MLP-specific
-# MLP_HIDDEN   = 256
 
 # DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEVICE = torch.device('cpu')
@@ -115,15 +95,7 @@ class BehavioralCloningPolicyDataset(Dataset):
             actions_n = self._norm_action(actions)
             T = len(states_f)
             for i in range(T):
-                # lo = i - k + 1
-                # if lo < 0:
-                #     pad  = np.repeat(states_f[:1], -lo, axis=0)
-                #     hist = np.concatenate([pad, states_f[:i + 1]], axis=0)
-                # else:
-                #     hist = states_f[lo:i + 1]
-                # cond = hist.reshape(-1)
-                # if use_goal:
-                #     cond = np.concatenate([cond, goal_feat])
+
 
                 acts = actions_n[i:i + horizon]
                 if len(acts) < horizon:
@@ -136,15 +108,7 @@ class BehavioralCloningPolicyDataset(Dataset):
             actions_n = self._norm_action(actions)
             T = len(states_f)
             for i in range(T):
-                # lo = i - k + 1
-                # if lo < 0:
-                #     pad  = np.repeat(states_f[:1], -lo, axis=0)
-                #     hist = np.concatenate([pad, states_f[:i + 1]], axis=0)
-                # else:
-                #     hist = states_f[lo:i + 1]
-                # cond = hist.reshape(-1)
-                # if use_goal:
-                #     cond = np.concatenate([cond, goal_feat])
+
 
                 acts = actions_n[i:i + horizon]
                 if len(acts) < horizon:
@@ -152,22 +116,7 @@ class BehavioralCloningPolicyDataset(Dataset):
                     acts = np.concatenate([acts, pad], axis=0)
                 self.test_samples.append((states_f[i].astype(np.float32).reshape(-1), acts.astype(np.float32)))
 
-            # Append synthetic holding samples using the trajectory's final
-            # state and final action (the IPOPT-computed stabilizing torque).
-            # This teaches the model to maintain the upright position.
-            # if hold_steps > 0:
-            #     final_feat = states_f[-1]                        # (NX_FEAT,)
-            #     final_act  = actions_n[-1]                       # (nu,)
-            #     hold_hist  = np.repeat(final_feat[None], k, axis=0)  # (k, NX_FEAT)
-            #     hold_cond  = hold_hist.reshape(-1)
-            #     if use_goal:
-            #         hold_cond = np.concatenate([hold_cond, goal_feat])
-            #     hold_acts = np.repeat(final_act[None], horizon, axis=0)  # (H, nu)
-            #     for _ in range(hold_steps):
-            #         self.samples.append((
-            #             hold_cond.astype(np.float32),
-            #             hold_acts.astype(np.float32),
-            #         ))
+
 
         self.cond_dim = self.train_samples[0][0].shape[0]
 
@@ -211,27 +160,24 @@ class BCPolicyModel(nn.Module):
         super().__init__()
         self.layers = nn.Sequential(
             nn.Linear(6, 512),
-            # nn.BatchNorm1d(512),
+            
             nn.Tanh(),
             nn.Dropout(0.2),
             nn.Linear(512, 256),
-            # nn.BatchNorm1d(256),
+            
             nn.Tanh(),
             nn.Dropout(0.2),
             nn.Linear(256, 256),
-            # nn.BatchNorm1d(256),
+            
             nn.Tanh(),
             nn.Dropout(0.2),
             nn.Linear(256, 128),
-            # nn.BatchNorm1d(256),
+           
             nn.Tanh(),
             nn.Dropout(0.2),
-            # nn.Linear(128, 64),
-            # # nn.BatchNorm1d(64),
-            # nn.ReLU(),
-            # nn.Dropout(0.3),
+
             nn.Linear(128, 2 * self.horizon),
-            # nn.ReLU(),
+
             nn.Tanh()
         )
 
@@ -263,11 +209,7 @@ def train(data, model, loss_fn, optimizer, batch_size):
         optimizer.zero_grad()
         train_loss += loss.item()
 
-        # Print a summary every 10 batches
-        # if batch % 10 == 0:
-        #     loss, current = loss.item(), batch * batch_size + len(X)
-        #     print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
-    # print(f"loss: {loss:>7f}")
+
     return train_loss / batch
 
 def evaluate(dataloader, model, loss_fn):
@@ -307,18 +249,6 @@ def save_checkpoint(path, model, cond_dim):
     every saved file has an identical, eval-loadable format.
     """
     torch.save(model.state_dict(), path)
-    # torch.save({
-    #     "model_state": model.state_dict(),
-    #     # "model_state_raw": policy.model.state_dict(),
-    #     "config": {
-    #         # "arch": arch,
-    #         # "net_kwargs": net_kwargs,
-    #         "timesteps": TIMESTEPS, "horizon": H, "action_dim": CONTROL_INPUT_DIM,
-    #         "cond_dim": cond_dim,
-    #         "nx": STATE_DIM, "nx_feat": STATE_DIM_FEAT, "use_goal": USE_GOAL,
-    #         "use_angular_features": True,
-    #     },
-    # }, path)
 
 
 # ── Train ────────────────────────────────────────────────────────────────────
@@ -340,33 +270,16 @@ def main():
     test_loader = DataLoader(dataset.test_samples, batch_size=BATCH_SIZE, shuffle=False,
                         drop_last=True, pin_memory=(DEVICE.type == "cuda"))
     model = BCPolicyModel(horizon=H).to(DEVICE)
-    # policy = DiffusionPolicy(
-    #     scheduler=scheduler, network=network, device=DEVICE,
-    #     timesteps=TIMESTEPS, horizon=H, action_dim=CONTROL_INPUT_DIM, learning_rate=LR,
-    # )
+
     optimizer = torch.optim.Adam([
                         {'params': model.parameters(), 'lr':LR}
                     ])
     loss_fn = nn.MSELoss()
-    # print(f"Training arch='{args.arch}' on {DEVICE} for {args.epochs} epochs "
-    #       f"({sum(p.numel() for p in network.parameters()):,} params)...")
-    # if args.ckpt_every > 0:
-    #     print(f"Periodic checkpoints every {args.ckpt_every} epochs -> {args.ckpt_dir}/")
-
-    # Save a snapshot every N epochs into the checkpoints folder. Skip the final
-    # epoch here -- it's written once below as the canonical --ckpt path.
-    # def on_epoch_end(epoch, avg_loss):
-    #     if args.ckpt_every > 0 and epoch % args.ckpt_every == 0 and epoch != args.epochs:
-    #         snap = os.path.join(args.ckpt_dir, f"{args.arch}_epoch{epoch:04d}.pt")
-    #         save_checkpoint(snap, policy, args.arch, net_kwargs, dataset.cond_dim)
-    #         print(f"  ↳ checkpoint saved: {snap}")
     for t in tqdm(range(EPOCHS)):
         # print(f"Epoch {t+1}\n-------------------------------")
         train_loss_buffer.append(train(loader, model, loss_fn, optimizer, BATCH_SIZE))
         test_loss_buffer.append(evaluate(test_loader, model, loss_fn))
-        # print("VALIDATION:", end=" ")
-        # evaluate(valid_dataloader, model, loss_fn)
-    # train(loader, model, nn.MSELoss(), optimizer, BATCH_SIZE)
+
     plt.plot(train_loss_buffer)
     plt.plot(test_loss_buffer)
     plt.title("Training Loss")
