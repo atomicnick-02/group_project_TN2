@@ -1,18 +1,18 @@
 """
-Generate the Diffusion-Policy training set by ROLLING OUT the working TVLQR
+Generate the Diffusion-Policy training set by rolling out the working TVLQR
 swing-up controller inside the MuJoCo simulator and logging
 (observed_state, commanded_torque) at the control rate.
 
-WHY THIS REPLACES generate_dataset.py:
+Why this replaces generate_dataset.py:
     The old generator saved the trajectory-optimizer's collocation states/actions
     directly. Those were computed for a frictionless point-mass model that didn't
-    match dp.xml AND were dynamically infeasible at dt=0.05 -- applying the saved
-    torques in MuJoCo does NOT reproduce the saved states. A policy cloning that
+    match dp.xml and were dynamically infeasible at dt=0.05 -- applying the saved
+    torques in MuJoCo does not reproduce the saved states. A policy cloning that
     data learns a state->action map for a simulator it is never evaluated on, so
     it cannot swing up.
 
-    Here every (state, action) pair is produced by stepping the ACTUAL MuJoCo
-    model under a controller that provably swings up and HOLDS (verified: 265
+    Here every (state, action) pair is produced by stepping the actual MuJoCo
+    model under a controller that provably swings up and holds (verified: 265
     consecutive in-tolerance steps from rest, 12/12 from perturbed starts). The
     data is therefore dynamically valid by construction, and -- because we roll
     out closed-loop from many initial conditions with action-noise perturbations
@@ -21,11 +21,11 @@ WHY THIS REPLACES generate_dataset.py:
     problem on this chaotic system.
 
 DAgger detail: we apply (commanded + noise) to the sim for state coverage, but
-    LOG the clean commanded action as the supervised target. So each sample is
-    "at this (possibly off-nominal) state, the expert would command THIS torque".
+    log the clean commanded action as the supervised target. So each sample is
+    "at this (possibly off-nominal) state, the expert would command this torque".
 
 Output: results/expert_trajectories.h5 with groups traj_*, each holding
-    states  (T, 4) and actions (T, 2)  -- the SAME format
+    states  (T, 4) and actions (T, 2)  -- the same format
     train_diffusion_policy.py already consumes, so nothing downstream changes.
 
 The controller uses the committed, working reference (trajectory.csv, inputs.csv,
@@ -50,7 +50,7 @@ X_GOAL = np.array([np.pi, 0.0, 0.0, 0.0])
 DT_CTRL = 0.05
 
 
-# ── TVLQR controller (adapted from the reference script) ─────────────────────
+# TVLQR controller (adapted from the reference script)
 # Lives here because this dataset generator is now its only consumer: the
 # evaluation script (evaluate_swingup.py) dropped TVLQR in favour of the BC /
 # diffusion baselines. It loads the committed, working reference
@@ -206,7 +206,7 @@ def main():
     max_tau = float(env.action_space.high[0])
     ctrl = TVLQRController()                  # loads trajectory.csv/inputs.csv/K_matrix.npy
 
-    # ── Guard: confirm the reference on disk still swings up & holds. ──
+    # Guard: confirm the reference on disk still swings up & holds.
     _, _, ok = rollout(env, ctrl, np.zeros(4), args.episode_steps, max_tau)
     if not ok:
         env.close()
@@ -238,7 +238,7 @@ def main():
         swing_kept = kept
         print(f"Swing-up rollouts: {swing_kept} kept. Generating upright-hold rollouts...")
 
-        # ── Upright-hold rollouts: teach the stabilizing gain around the top. ──
+        # Upright-hold rollouts: teach the stabilizing gain around the top.
         for hp in range(args.n_hold):
             x0 = sample_upright_x0(rng)
             s, a, ok = rollout(env, ctrl, x0, args.hold_steps, max_tau)  # no perturb

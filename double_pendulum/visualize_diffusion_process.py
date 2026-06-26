@@ -1,19 +1,19 @@
 """
 Visualize the forward (noising) and reverse (denoising) diffusion of a single
-action sequence taken from the MIDDLE of an expert trajectory.
+action sequence taken from the middle of an expert trajectory.
 
 The Diffusion Policy never diffuses a whole trajectory -- it diffuses a short
 H-step action *chunk* conditioned on the recent state history. This script picks
 one such chunk from the middle of an expert rollout and shows the two halves of
 the diffusion process side by side:
 
-  * NOISING  (forward q(a_t | a_0)): start from the clean expert action chunk and
+  * Noising  (forward q(a_t | a_0)): start from the clean expert action chunk and
     progressively corrupt it toward N(0, I). We use the closed-form marginal
-    a_t = sqrt(alpha_bar_t)*a_0 + sqrt(1-alpha_bar_t)*eps with ONE fixed eps so
+    a_t = sqrt(alpha_bar_t)*a_0 + sqrt(1-alpha_bar_t)*eps with one fixed eps so
     the snapshots form a smooth, cumulative corruption (not 20 independent draws).
 
-  * DENOISING (reverse): start from pure Gaussian noise and run the trained
-    network's DDPM reverse loop, conditioned on the SAME state history, capturing
+  * Denoising (reverse): start from pure Gaussian noise and run the trained
+    network's DDPM reverse loop, conditioned on the same state history, capturing
     the action chunk after every denoising step. The final chunk is compared to
     the ground-truth expert chunk to show reconstruction quality.
 
@@ -50,7 +50,7 @@ _CURRENT_DIR = Path(__file__).resolve().parent
 _RESULTS_DIR = _CURRENT_DIR / "results"
 
 
-# ── Normalization helpers (mirror train_diffusion_policy.DiffusionPolicyDataset) ──
+# Normalization helpers (mirror train_diffusion_policy.DiffusionPolicyDataset)
 class Featurizer:
     """Reproduces the dataset's state->feature and action normalization exactly,
     so the conditioning vector we build matches what the network was trained on."""
@@ -101,7 +101,7 @@ class Featurizer:
         return cond.astype(np.float32)
 
 
-# ── Load the trained diffusion policy (network + scheduler) ──────────────────────
+# Load the trained diffusion policy (network + scheduler)
 def load_policy(ckpt_path, device):
     import torch
     from diffusion_models.diffusion_policy import (
@@ -127,7 +127,7 @@ def load_policy(ckpt_path, device):
     return policy, scheduler, cfg
 
 
-# ── Forward process: capture a_t for every t with ONE fixed noise draw ───────────
+# Forward process: capture a_t for every t with one fixed noise draw
 def forward_snapshots(scheduler, a0, torch, seed=0):
     """Returns (T, H, nu) array of the noised chunk at every diffusion step
     t = 0..T-1, using a single fixed epsilon so corruption is cumulative."""
@@ -143,7 +143,7 @@ def forward_snapshots(scheduler, a0, torch, seed=0):
     return np.stack(snaps, axis=0)                          # (T, H, nu)
 
 
-# ── Reverse process: capture a_t after every DDPM denoising step ─────────────────
+# Reverse process: capture a_t after every DDPM denoising step
 def reverse_snapshots(policy, scheduler, cond, torch, stochastic=False, seed=0):
     """Returns (n_steps, H, nu): the action chunk starting from pure noise (step
     T) down to the final denoised chunk, conditioned on `cond`."""
@@ -168,7 +168,7 @@ def reverse_snapshots(policy, scheduler, cond, torch, stochastic=False, seed=0):
     return np.stack(snaps, axis=0)                          # (T, H, nu)
 
 
-# ── Plotting ─────────────────────────────────────────────────────────────────────
+# Plotting
 def _maybe_denorm(arr, feat, denorm):
     return feat.denorm_action(arr) if denorm else arr
 
@@ -198,7 +198,7 @@ def plot_overlay(fwd, rev, a0, feat, out_path, denorm, info):
             ax.plot(steps_x, fwd_p[s, :, j], color=cmap_f(s / max(Tf - 1, 1)),
                     lw=1.2, alpha=0.85)
         ax.plot(steps_x, a0_p[:, j], "k--", lw=2.5, label="expert (clean)")
-        ax.set_title(f"NOISING  u{j+1}  (clean -> noise)")
+        ax.set_title(f"Noising u{j+1} (clean -> noise)")
         ax.set_xlabel("action step in chunk"); ax.set_ylabel(ylab)
         ax.grid(True, alpha=0.3); ax.legend(loc="upper right", fontsize=8)
 
@@ -209,7 +209,7 @@ def plot_overlay(fwd, rev, a0, feat, out_path, denorm, info):
                     lw=1.2, alpha=0.85)
         ax.plot(steps_x, a0_p[:, j], "k--", lw=2.5, label="expert (target)")
         ax.plot(steps_x, rev_p[-1, :, j], "c-", lw=2.5, label="final denoised")
-        ax.set_title(f"DENOISING  u{j+1}  (noise -> clean)")
+        ax.set_title(f"Denoising u{j+1} (noise -> clean)")
         ax.set_xlabel("action step in chunk"); ax.set_ylabel(ylab)
         ax.grid(True, alpha=0.3); ax.legend(loc="upper right", fontsize=8)
 
@@ -269,7 +269,7 @@ def plot_grid(snaps, a0, feat, out_path, denorm, title, n_show=8, reverse_labels
     print(f"[viz] wrote {out_path}")
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────────
+# Main
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -304,7 +304,7 @@ def main():
     policy, scheduler, cfg = load_policy(args.ckpt, device)
     H = policy.horizon
 
-    # ── Pick the trajectory + a chunk in the MIDDLE of it ──
+    # Pick the trajectory + a chunk from the middle of it
     with h5py.File(args.h5, "r") as f:
         keys = sorted(f.keys())
         traj_key = args.traj if args.traj is not None else keys[len(keys) // 2]
@@ -326,7 +326,7 @@ def main():
     print(f"[viz] {traj_key}: chunk start t-index={i}/{Tlen} (state "
           f"q=[{states[i,0]:.2f},{states[i,1]:.2f}])")
 
-    # ── Run both halves of the diffusion process, capturing all intermediates ──
+    # Run both halves of the diffusion process, capturing all intermediates
     fwd = forward_snapshots(scheduler, a0_t, torch, seed=args.seed)
     rev = reverse_snapshots(policy, scheduler, cond, torch,
                             stochastic=args.stochastic, seed=args.seed)
@@ -334,7 +334,7 @@ def main():
     recon_mse = float(np.mean((rev[-1] - a0_np) ** 2))
     print(f"[viz] reverse reconstruction MSE vs expert (normalized): {recon_mse:.4f}")
 
-    # ── Plot ──
+    # Plot
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     info = {"traj": traj_key, "t_index": i, "traj_len": Tlen,

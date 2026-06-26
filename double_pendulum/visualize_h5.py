@@ -20,10 +20,10 @@ def parse_range_expression(expr: str, available_keys: list) -> list:
     """
     sorted_keys = sorted(available_keys)
 
-    # Build an index → key map (by position) and a label → key map (by numeric suffix)
+    # Build an index -> key map (by position) and a label -> key map (by numeric suffix)
     position_map = {i: k for i, k in enumerate(sorted_keys)}
 
-    # Try to extract trailing integer from key names, e.g. "traj_020" → 20
+    # Try to extract trailing integer from key names, e.g. "traj_020" -> 20
     import re
     label_map = {}
     for k in sorted_keys:
@@ -100,7 +100,7 @@ class HDF5Visualizer:
             html.H1("HDF5 Expert Trajectory Visualizer", style={'textAlign': 'center'}),
 
             html.Div([
-                # ── Left column: dropdown + quick-select ──────────────────────
+                # Left column: dropdown + quick-select
                 html.Div([
                     html.Label("Select Trajectory:"),
                     dcc.Dropdown(
@@ -171,7 +171,7 @@ class HDF5Visualizer:
                     ]),
                 ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
 
-                # ── Right column: metadata ────────────────────────────────────
+                # Right column: metadata
                 html.Div([
                     html.Label("Metadata:"),
                     html.Pre(id='metadata-display', style={
@@ -195,7 +195,7 @@ class HDF5Visualizer:
             html.Div(id='dummy-output', style={'display': 'none'})
         ])
 
-        # ── Callback: Apply / Clear range → update dropdown ──────────────────
+        # Callback: Apply / Clear range -> update dropdown
         @app.callback(
             Output('traj-dropdown', 'value'),
             Output('range-feedback', 'children'),
@@ -218,19 +218,19 @@ class HDF5Visualizer:
 
             # Apply button
             if not range_expr or not range_expr.strip():
-                return current_value, '⚠ Enter a range expression first.', \
+                return current_value, 'Enter a range expression first.', \
                        {'fontSize': '12px', 'color': '#c0392b', 'minHeight': '18px'}
 
             matched = parse_range_expression(range_expr, list(self.trajectories.keys()))
 
             if not matched:
-                return current_value, f'⚠ No trajectories matched "{range_expr}".', \
+                return current_value, f'No trajectories matched "{range_expr}".', \
                        {'fontSize': '12px', 'color': '#c0392b', 'minHeight': '18px'}
 
-            msg = f'✓ {len(matched)} trajectorie(s) selected: {matched[0]}…{matched[-1]}'
+            msg = f'{len(matched)} trajectorie(s) selected: {matched[0]}...{matched[-1]}'
             return matched, msg, {'fontSize': '12px', 'color': '#27ae60', 'minHeight': '18px'}
 
-        # ── Callback: render plots ────────────────────────────────────────────
+        # Callback: render plots
         @app.callback(
             [Output('state-plot', 'figure'),
              Output('action-plot', 'figure'),

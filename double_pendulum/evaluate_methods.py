@@ -1,33 +1,24 @@
 """
-Head-to-head evaluation of the two imitation-learning controllers on the
-double-pendulum swing-up task:
+Compares the two imitation-learning controllers on the double-pendulum swing-up
+task: behavioral cloning (behaviour_cloning/bc_policy_3.pt, a plain MLP) and the
+diffusion policy (double_pendulum/results/diffusion_policy.pt). Both run with
+model.eval()/no_grad in the same MuJoCo environment, from the same start states
+and against the same success criteria, so the numbers line up.
 
-    * Behavioral Cloning (BC)   -- behaviour_cloning/bc_policy_3.pt   (plain MLP)
-    * Diffusion Policy           -- double_pendulum/results/diffusion_policy.pt
+It runs BC then diffusion over the same battery of trials, writing per-step
+trajectory CSVs and a per-trial metrics CSV for each, then merges the two into
+comparison plots and a summary CSV under results/method_comparison/.
 
-Both nets are run in EVALUATION MODE (model.eval(), no_grad) inside the identical
-MuJoCo environment, start state and success criteria, so their numbers are
-directly comparable.
+Metrics per trial (later aggregated): success rate, trajectory quality
+(integrated angle error and time-to-success), stability (post-success angle
+error and state std), control smoothness (|du|, total variation, jerk, effort),
+robustness to observation noise, and inference time per control step.
 
-What it does, in order:
-    1. Run the BC controller over a battery of trials -> per-step CSVs + a
-       per-trial metrics CSV  (results/method_comparison/bc/...).
-    2. Run the Diffusion controller over the same battery -> its own CSVs.
-    3. Combine both methods' metrics into comparison plots + a summary CSV.
-
-Evaluation metrics recorded (per trial, then aggregated):
-    success rate ........ fraction of trials that reach & hold upright
-    trajectory quality .. integrated angle error (IAE) + time-to-success
-    stability ........... post-success steady-state angle error & state std
-    smoothness .......... control increment |du|, total variation, jerk, effort
-    robustness to noise . success rate vs injected observation-noise level
-    computational cost ... wall-clock inference time per control step (ms / Hz)
-
-Run from the repo root or from double_pendulum/ (both are put on sys.path):
+Works from the repo root or from double_pendulum/ (both go on sys.path):
     python double_pendulum/evaluate_methods.py
     python double_pendulum/evaluate_methods.py --quick           # tiny smoke test
     python double_pendulum/evaluate_methods.py --n-nominal 10 --device cuda
-    python double_pendulum/evaluate_methods.py --no-success-rate # only random-init
+    python double_pendulum/evaluate_methods.py --no-success-rate # random-init only
 """
 
 import os
@@ -59,7 +50,7 @@ VEL_NOISE_FACTOR = 5.0                             # obs-noise on velocities = f
 BC_COLOR, DIFF_COLOR = "tab:blue", "tab:orange"
 
 
-# ── BC controller with the device fix ────────────────────────────────────────
+# BC controller with the device fix
 class BCControllerGPU(BCController):
     """
     BCController.action() builds the input tensor on CPU but the model may live
@@ -76,9 +67,9 @@ class BCControllerGPU(BCController):
         return self._denorm_a(a_seq[0])
 
 
-# ── Controller construction ──────────────────────────────────────────────────
+# Controller construction
 def build_controller(name, device, paths, compile_diff=True):
-    """Build a fresh controller in EVAL mode. `device` forces cuda/cpu for both."""
+    """Build a fresh controller in eval mode. `device` forces cuda/cpu for both."""
     import torch
     # Both controllers pick their device from torch.cuda.is_available(); to honor
     # --device we temporarily mask cuda so a forced 'cpu' run really runs on CPU.
@@ -106,7 +97,7 @@ def build_controller(name, device, paths, compile_diff=True):
     return ctrl
 
 
-# ── One rollout ──────────────────────────────────────────────────────────────
+# One rollout
 def rollout(env, ctrl, q0, v0, noise_sigma, rng,
             max_steps, dt_control, hold_steps, angle_tol, vel_tol):
     """
@@ -114,7 +105,7 @@ def rollout(env, ctrl, q0, v0, noise_sigma, rng,
 
     The whole episode is driven by env.reset()/env.step(): the env is a headless
     MuJoCo environment (render_mode=None) whose frame_skip is set so a single
-    step() advances exactly one dt_control window. The controller observes a NOISY
+    step() advances exactly one dt_control window. The controller observes a noisy
     copy of the env's state (Gaussian obs-noise with std `noise_sigma` on angles
     and VEL_NOISE_FACTOR*noise_sigma on velocities); the clean state the env
     returns is what we record and score. The env returns angles wrapped to
@@ -169,7 +160,7 @@ def rollout(env, ctrl, q0, v0, noise_sigma, rng,
     }
 
 
-# ── Metrics for one rollout ──────────────────────────────────────────────────
+# Metrics for one rollout
 def compute_metrics(roll, dt_control, hold_steps, angle_tol, vel_tol):
     t, x, u = roll["t"], roll["x"], roll["u"]
     success_step = roll["success_step"]
@@ -231,7 +222,7 @@ def compute_metrics(roll, dt_control, hold_steps, angle_tol, vel_tol):
     }
 
 
-# ── Per-trial trajectory CSV ─────────────────────────────────────────────────
+# Per-trial trajectory CSV
 def save_trajectory_csv(path, roll):
     df = pd.DataFrame({
         "t": roll["t"],
@@ -243,7 +234,7 @@ def save_trajectory_csv(path, roll):
     df.to_csv(path, index=False)
 
 
-# ── Run a whole battery for one method ───────────────────────────────────────
+# Run a whole battery for one method
 def run_method(name, device, paths, out_root, noise_levels, n_nominal, n_robust,
                max_steps, dt_control, hold_steps, angle_tol, vel_tol, seed,
                compile_diff=True):
@@ -288,7 +279,7 @@ def run_method(name, device, paths, out_root, noise_levels, n_nominal, n_robust,
     return df, examples
 
 
-# ── Aggregation + summary CSV ────────────────────────────────────────────────
+# Aggregation + summary CSV
 def _agg(df_nom, col):
     return float(np.nanmean(df_nom[col])), float(np.nanstd(df_nom[col]))
 
@@ -331,7 +322,7 @@ def build_summary(bc_df, diff_df, out_root):
     return summary, rob
 
 
-# ── Plots combining both methods ─────────────────────────────────────────────
+# Plots combining both methods
 def _bar(ax, vals, errs, title, ylabel, log=False):
     xs = [0, 1]
     ax.bar(xs, vals, yerr=errs, capsize=5, color=[BC_COLOR, DIFF_COLOR],
@@ -347,7 +338,7 @@ def _bar(ax, vals, errs, title, ylabel, log=False):
 
 
 def _success_panel(ax, bc_nom, diff_nom, rand_summary=None, random_noise=None):
-    """Success-rate panel for the headline figure. Given a random-init summary it
+    """Success-rate panel for the main figure. Given a random-init summary it
     shows nominal vs random-init as grouped bars per method (so the off-
     distribution collapse is visible in one panel); otherwise it falls back to
     the nominal-only bar."""
@@ -393,7 +384,7 @@ def make_plots(bc_df, diff_df, summary, rob, bc_ex, diff_ex, plots_dir, dt_contr
     s_bc   = summary[summary["method"] == "bc"].iloc[0]
     s_diff = summary[summary["method"] == "diffusion"].iloc[0]
 
-    # 1) metric comparison bars (the headline figure)
+    # 1) metric comparison bars (the main figure)
     fig, axs = plt.subplots(2, 3, figsize=(16, 9))
     _success_panel(axs[0, 0], s_bc["success_rate"], s_diff["success_rate"],
                    rand_summary, random_noise)
@@ -410,7 +401,7 @@ def make_plots(bc_df, diff_df, summary, rob, bc_ex, diff_ex, plots_dir, dt_contr
     _bar(axs[1, 2], [s_bc["infer_ms_mean"], s_diff["infer_ms_mean"]],
          [s_bc["infer_ms_std"], s_diff["infer_ms_std"]],
          "Computational cost\n(inference / control step)", "ms (log)", log=True)
-    fig.suptitle("BC vs Diffusion Policy — double-pendulum swing-up", fontsize=15)
+    fig.suptitle("BC vs Diffusion Policy -- double-pendulum swing-up", fontsize=15)
     fig.tight_layout()
     fig.savefig(plots_dir / "metrics_comparison.png", dpi=130)
     plt.close(fig)
@@ -471,12 +462,12 @@ def make_plots(bc_df, diff_df, summary, rob, bc_ex, diff_ex, plots_dir, dt_contr
     print(f"Plots -> {plots_dir}")
 
 
-# ── Random-initial-position stress battery ───────────────────────────────────
+# Random-initial-position stress battery
 def run_random_init_battery(name, device, paths, out_root, n_runs, noise_sigma,
                             max_steps, dt_control, hold_steps, angle_tol, vel_tol,
                             seed, compile_diff=True):
     """
-    Stress test: `n_runs` swing-ups from FULLY RANDOM initial joint positions
+    Stress test: `n_runs` swing-ups from fully random initial joint positions
     (uniform in [-pi, pi]) under a fixed heavy observation noise (`noise_sigma`),
     to estimate a success rate well outside the near-hanging-down start the
     policies were trained on. Returns the per-trial metrics DataFrame.
@@ -519,7 +510,7 @@ def run_random_init_battery(name, device, paths, out_root, n_runs, noise_sigma,
     return df
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# Main
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -595,7 +586,7 @@ def main():
 
     # Success-rate noise-sweep battery: run 1) BC then 2) Diffusion over the same
     # battery/env/criteria, then combine into the comparison summary. Plotting is
-    # deferred to the end so the headline figure can fold in the random-init
+    # deferred to the end so the main figure can fold in the random-init
     # success rate. Toggle the whole battery off with --no-success-rate.
     dfs, exs = {}, {}
     summary = rob = None
@@ -613,7 +604,7 @@ def main():
                 args.angle_tol, args.vel_tol, args.seed,
                 compile_diff=not args.no_compile)
 
-        # combine -- only when BOTH methods ran (the comparison needs both)
+        # combine -- only when both methods ran (the comparison needs both)
         if "bc" in dfs and "diffusion" in dfs:
             summary, rob = build_summary(dfs["bc"], dfs["diffusion"], out_root)
             pd.set_option("display.float_format", lambda v: f"{v:.4g}")
@@ -626,7 +617,7 @@ def main():
             ran = sorted(dfs) or ["nothing"]
             missing = [m for m in ("bc", "diffusion") if m not in dfs]
             print(f"\n[partial] Ran {ran}; per-trial CSVs saved under {out_root}.")
-            print(f"[partial] The combined comparison needs BOTH methods; missing: {missing}.")
+            print(f"[partial] The combined comparison needs both methods; missing: {missing}.")
             if "diffusion" in missing:
                 print("          results/diffusion_policy.pt is absent -- a diffusion "
                       "training run may be regenerating it.\n"
@@ -637,7 +628,7 @@ def main():
 
     # Random-initial-position stress test: n_random runs per method from uniformly
     # random start angles at a fixed heavy noise -> success rate. Its per-method
-    # rate is folded into the headline comparison figure below.
+    # rate is folded into the main comparison figure below.
     rand_summary = None
     if not args.no_random_init:
         rand_rows = []
@@ -670,7 +661,7 @@ def main():
             print(f"\nRandom-init summary -> "
                   f"{out_root / 'random_init_success_rate.csv'}")
 
-    # Plots last: the headline figure folds in the random-init success rate when
+    # Plots last: the main figure folds in the random-init success rate when
     # both batteries produced a per-method rate (otherwise it shows nominal only).
     if summary is not None:
         rand_for_plot = (rand_summary

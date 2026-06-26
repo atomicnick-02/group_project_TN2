@@ -1,9 +1,9 @@
 """
-Architecture shoot-out under RANDOM initial conditions.
+Architecture shoot-out under random initial conditions.
 
 This is the random-init companion to compare_diffusion_models.py. Where that
 script scores diffusion checkpoints from the near-hanging-down start they were
-trained on, this one stresses every FINAL checkpoint from fully random initial
+trained on, this one stresses every final checkpoint from fully random initial
 joint positions (uniform in [-pi, pi]) under a fixed light observation noise,
 and reports a single number per architecture: the success rate over N runs.
 
@@ -20,7 +20,7 @@ Two stages, one command:
     is then re-run at each of `--n-exec` (default 1 2 4), and the success rate is
     plotted against the receding-horizon replan rate.
 
-Both stages reuse the EXACT rollout physics + success criteria from
+Both stages reuse the exact rollout physics + success criteria from
 evaluate_methods.py, so these numbers are comparable to the other harnesses.
 
     python double_pendulum/compare_architectures_random_init.py
@@ -63,13 +63,13 @@ from compare_diffusion_models import (
 )
 
 
-# ── One random-init battery for a single controller ──────────────────────────
+# One random-init battery for a single controller
 def run_random_init(label, ctrl, env, n_runs, noise_sigma, max_steps,
                     dt_control, hold_steps, angle_tol, vel_tol, seed):
     """`n_runs` swing-ups from uniformly random start angles at fixed noise.
 
     Each trial is seeded by (label-independent) (trial, seed) so EVERY model sees
-    the SAME random initial conditions -- the success-rate differences are then
+    the same random initial conditions -- the success-rate differences are then
     purely the architecture/n_exec, not luck of the draw.
     """
     rows = []
@@ -93,7 +93,7 @@ def run_random_init(label, ctrl, env, n_runs, noise_sigma, max_steps,
     return rows
 
 
-# ── Plots ────────────────────────────────────────────────────────────────────
+# Plots
 def plot_architecture_bars(summary, plots_dir, n_runs, noise):
     plots_dir.mkdir(parents=True, exist_ok=True)
     labels = summary["model"].tolist()
@@ -111,7 +111,7 @@ def plot_architecture_bars(summary, plots_dir, n_runs, noise):
     for x, v in zip(xs, rates):
         if np.isfinite(v):
             ax.annotate(f"{v:.0%}", (x, v), ha="center", va="bottom", fontsize=9)
-    ax.set_title(f"Architecture success rate — random init\n"
+    ax.set_title(f"Architecture success rate -- random init\n"
                  f"(n={n_runs} runs, noise sigma={noise}, n_exec=1)")
     fig.tight_layout()
     out = plots_dir / "architecture_success_rate.png"
@@ -142,7 +142,7 @@ def plot_nexec_sweep(sweep, plots_dir, n_runs, noise, timesteps):
     return out
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# Main
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -216,7 +216,7 @@ def main():
 
     env = DoublePendulumEnv(render_mode=None, frame_skip=1)
 
-    # ── Stage A: one success rate per architecture ────────────────────────────
+    # Stage A: one success rate per architecture
     all_rows, summary_rows, used_labels = [], [], set()
     # Remember the T<sweep> transformer checkpoint so Stage B reuses it.
     sweep_ckpt = sweep_stats = sweep_meta = None
@@ -275,7 +275,7 @@ def main():
     else:
         print("\n[sweep-only] Stage A skipped; existing architecture_* outputs kept.")
 
-    # ── Stage B: execution-step sweep on the T<sweep> transformer ─────────────
+    # Stage B: execution-step sweep on the T<sweep> transformer
     sweep_summary = None
     if not args.no_sweep:
         if sweep_ckpt is None:

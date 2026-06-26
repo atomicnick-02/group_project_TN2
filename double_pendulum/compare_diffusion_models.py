@@ -1,5 +1,5 @@
 """
-Compare several DIFFUSION-POLICY checkpoints (different hyperparameters) on the
+Compare several diffusion-policy checkpoints (different hyperparameters) on the
 double-pendulum swing-up task, head-to-head, under one identical battery.
 
 Where evaluate_methods.py answers "BC vs Diffusion", this script answers
@@ -9,7 +9,7 @@ the receding-horizon replan rate n_exec, training epochs/LR, ...) trade off on
 success rate, trajectory quality, smoothness, robustness and inference cost.
 
 Each "model" in the comparison is a (checkpoint, n_exec) pair, so you can sweep
-BOTH the trained network AND the eval-time replan rate from one command:
+both the trained network and the eval-time replan rate from one command:
 
     # every checkpoint found under results/checkpoints/, executed n_exec=1
     python double_pendulum/compare_diffusion_models.py
@@ -32,8 +32,8 @@ normalization so each model is evaluated with the exact stats it was trained on;
 results/norm_stats.json is the fallback.
 
 Outputs (default results/diffusion_comparison/):
-    per_trial_metrics.csv ... every trial of every model
-    summary.csv ............. one aggregated row per model
+    per_trial_metrics.csv          every trial of every model
+    summary.csv                    one aggregated row per model
     robustness_success_rate.csv
     plots/metrics_comparison.png   bar charts across models
     plots/robustness_vs_noise.png  success rate vs observation noise
@@ -61,7 +61,7 @@ for _p in (_THIS, _REPO):
 
 from simulation import DoublePendulumEnv
 from evaluate_swingup import DiffusionController
-# Reuse the EXACT rollout physics + metric definitions from the BC-vs-diffusion
+# Reuse the exact rollout physics + metric definitions from the BC-vs-diffusion
 # harness, so these numbers are directly comparable to evaluate_methods.py.
 from evaluate_methods import rollout, compute_metrics, GOAL, VEL_NOISE_FACTOR
 
@@ -69,7 +69,7 @@ CKPT_DIR = _THIS / "results" / "checkpoints"
 SHARED_STATS = _THIS / "results" / "norm_stats.json"
 
 
-# ── Per-checkpoint metadata + stats discovery ────────────────────────────────
+# Per-checkpoint metadata + stats discovery
 def read_meta(ckpt_path):
     """Hyperparameters describing a checkpoint.
 
@@ -144,9 +144,9 @@ def arch_desc(meta):
     return f"{arch}  ·  T={T} denoising steps, horizon={H}"
 
 
-# ── Controller construction (mirrors evaluate_methods.build_controller) ──────
+# Controller construction (mirrors evaluate_methods.build_controller)
 def build_diffusion(ckpt_path, stats_path, device, n_exec, compile_diff):
-    """Build a DiffusionController in EVAL mode, honoring a forced device."""
+    """Build a DiffusionController in eval mode, honoring a forced device."""
     import torch
     if device == "cpu":                      # force CPU even on a CUDA box
         _orig = torch.cuda.is_available
@@ -168,7 +168,7 @@ def build_diffusion(ckpt_path, stats_path, device, n_exec, compile_diff):
     return ctrl
 
 
-# ── Run one model (checkpoint + n_exec) over the whole battery ───────────────
+# Run one model (checkpoint + n_exec) over the whole battery
 def run_model(label, ctrl, env, noise_levels, n_nominal, n_robust,
               max_steps, dt_control, hold_steps, angle_tol, vel_tol, seed):
     rows, examples = [], {}
@@ -176,7 +176,7 @@ def run_model(label, ctrl, env, noise_levels, n_nominal, n_robust,
         n_trials = n_nominal if sigma == 0.0 else n_robust
         for trial in range(n_trials):
             # Deterministic per (label, sigma, trial) so reruns reproduce, and so
-            # every model sees the SAME initial conditions at each (sigma, trial).
+            # every model sees the same initial conditions at each (sigma, trial).
             rng = np.random.default_rng(
                 abs(hash(("diff", round(sigma, 4), trial, seed))) % (2**32))
             q0 = rng.normal(0.0, 0.10, size=2)
@@ -195,7 +195,7 @@ def run_model(label, ctrl, env, noise_levels, n_nominal, n_robust,
     return rows, examples
 
 
-# ── Aggregation ──────────────────────────────────────────────────────────────
+# Aggregation
 def build_summary(df, meta_by_label):
     rows = []
     for label, sub in df.groupby("model", sort=False):
@@ -232,7 +232,7 @@ def build_summary(df, meta_by_label):
     return pd.DataFrame(rows)
 
 
-# ── Plots ────────────────────────────────────────────────────────────────────
+# Plots
 def _bars(ax, labels, vals, errs, title, ylabel, xlabel=None, rotation=30, log=False):
     xs = np.arange(len(labels))
     colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(labels)))
@@ -256,7 +256,7 @@ def make_plots(df, summary, plots_dir, meta_by_label):
     labels = summary["model"].tolist()
     n_trials = int(summary["n_nominal_trials"].max()) if len(summary) else 0
 
-    # When every bar is the SAME checkpoint and only the receding-horizon replan
+    # When every bar is the same checkpoint and only the receding-horizon replan
     # rate (n_exec = number of executed actions per plan) varies, the comparison
     # IS an n_exec sweep: label the x-axis by n_exec and name the shared network
     # architecture in the figure title instead of repeating it on every bar.
@@ -293,7 +293,7 @@ def make_plots(df, summary, plots_dir, meta_by_label):
     _bars(axs[1, 2], xlabels, summary["infer_ms_mean"], summary["infer_ms_std"],
           "Inference cost / control step",
           "Inference time per step  (ms, log scale)", x_axis, rot, log=True)
-    title = f"Diffusion-policy swing-up — {arch_line}"
+    title = f"Diffusion-policy swing-up -- {arch_line}"
     if n_trials:
         title += f"\n({n_trials} trials per n_exec)"
     fig.suptitle(title, fontsize=14)
@@ -360,7 +360,7 @@ def make_sweep_plot(summary, plots_dir, sweep_key):
     return out
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# Main
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)

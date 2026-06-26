@@ -43,12 +43,12 @@ current_dir = Path(__file__).resolve().parent
 results_dir = current_dir / "results"
 
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
+# Helpers
 def wrap_to_pi(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
 
 
-# ── Diffusion-policy controller ──────────────────────────────────────────────
+# Diffusion-policy controller
 class DiffusionController:
     """
     Receding-horizon Diffusion Policy.
@@ -78,7 +78,7 @@ class DiffusionController:
         self.use_goal = cfg["use_goal"]
         self.n_exec   = n_exec
 
-        # Rebuild the EXACT architecture the checkpoint was trained with.
+        # Rebuild the exact architecture the checkpoint was trained with.
         # The checkpoint stores arch + the kwargs the network was built from,
         # so MLP vs Transformer (and their sizes) round-trip automatically.
         arch       = cfg.get("arch", "mlp")
@@ -150,10 +150,10 @@ class DiffusionController:
         return self._queue.pop(0)
 
 
-# ── Behavioral-cloning controller (plain MLP baseline) ───────────────────────
+# Behavioral-cloning controller (plain MLP baseline)
 class BCController:
     """
-    Direct behavioral-cloning baseline (NOT a diffusion model).
+    Direct behavioral-cloning baseline (not a diffusion model).
 
     A single feed-forward MLP maps the current state's angular features
     [sin q1, cos q1, sin q2, cos q2, dq1_n, dq2_n] -> an H-step action chunk
@@ -239,7 +239,7 @@ class BCController:
         return self._denorm_a(a_seq[0])
 
 
-# ── Evaluation loop ──────────────────────────────────────────────────────────
+# Evaluation loop
 def evaluate(hold_steps=40, angle_tol=0.20, vel_tol=1.0,
              max_steps=1200, dt_control=0.05, realtime=True, ckpt="diffusion_policy.pt",
              controller_name="diffusion", bc_ckpt="bc_policy_3.pt",

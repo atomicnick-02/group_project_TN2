@@ -17,13 +17,11 @@ from collections import namedtuple
 jax.config.update("jax_enable_x64", True)
 
 
-# ─────────────────────────────────────────────
-# Model parameters: READ DIRECTLY FROM dp.xml
-# ─────────────────────────────────────────────
+# Model parameters: read directly from dp.xml
 # The whole point: the trajectory optimizer below and the MuJoCo simulator used
-# for deployment must describe the SAME physical system. Previously this file
+# for deployment must describe the same physical system. Previously this file
 # hard-coded a frictionless point-mass model whose inertia, gravity arms, damping
-# and friction did NOT match dp.xml -- so the "expert" actions never actually
+# and friction did not match dp.xml -- so the "expert" actions never actually
 # swung up the simulated pendulum. We now pull every parameter from the XML, so
 # editing dp.xml automatically updates the planner; they can't silently drift.
 #
@@ -83,9 +81,7 @@ Qfin = Q
 R = jnp.diag(jnp.array([1.0, 1.0])) * 0.01
 
 
-# ─────────────────────────────────────────────
 # Dynamics (distributed-inertia model, parameterized from dp.xml)
-# ─────────────────────────────────────────────
 def M(q):
     q2 = q[1]
     a1 = P.I1 + P.m1 * P.lc1 ** 2 + P.m2 * P.l1 ** 2
@@ -126,9 +122,7 @@ def dynamics(x, u):
     return jnp.concatenate([dq, ddq]).flatten()
 
 
-# ─────────────────────────────────────────────
 # Objective and gradient
-# ─────────────────────────────────────────────
 def stage_cost(x, u, x_goal):
     e = x - x_goal
     return e @ Q @ e + u @ R @ u
@@ -151,9 +145,7 @@ def total_objective_grad(z, steps, nx, nu, x_goal):
     return jnp.concatenate([gX.flatten(), gU.flatten()])
 
 
-# ─────────────────────────────────────────────
 # Trapezoidal collocation constraints
-# ─────────────────────────────────────────────
 def trapezoidal_collocation(xk, xkp1, uk, ukp1, dt):
     fk = dynamics(xk, uk)
     fkp1 = dynamics(xkp1, ukp1)
@@ -172,9 +164,7 @@ def constraints(z, steps, nx, nu, x0, x_goal, dt):
     return jnp.concatenate([c_init, c_dyn, c_final])
 
 
-# ─────────────────────────────────────────────
 # IPOPT problem wrapper
-# ─────────────────────────────────────────────
 class Problem:
     """
     min  f(z)   with z = [x_0, ..., x_N, u_0, ..., u_N]
@@ -202,9 +192,7 @@ class Problem:
         return np.asarray(self._jac(z), dtype=np.float64).ravel()
 
 
-# ─────────────────────────────────────────────
 # Open-loop verification against the real MuJoCo sim
-# ─────────────────────────────────────────────
 def verify_open_loop(x_traj, u_traj, dt, xml_path=XML_PATH):
     """
     Replay the optimized torques open-loop in MuJoCo and return the resulting
@@ -233,9 +221,7 @@ def verify_open_loop(x_traj, u_traj, dt, xml_path=XML_PATH):
     return np.array(sim)
 
 
-# ─────────────────────────────────────────────
 # Plotting
-# ─────────────────────────────────────────────
 def plot_results(time_span, x_traj, u_traj, out_dir, sim_traj=None):
     os.makedirs(out_dir, exist_ok=True)
 
@@ -265,9 +251,7 @@ def plot_results(time_span, x_traj, u_traj, out_dir, sim_traj=None):
     fig2.savefig(os.path.join(out_dir, "torques.png"), dpi=150)
 
 
-# ─────────────────────────────────────────────
 # Main
-# ─────────────────────────────────────────────
 def main():
     print("Loaded model parameters from dp.xml:")
     for k, v in P._asdict().items():
@@ -317,7 +301,7 @@ def main():
     u_traj = z_opt[steps * nx:].reshape(steps, nu)
     print("Planned final state:", np.asarray(x_traj[-1]))
 
-    # ── The critical check: do these torques actually swing up MuJoCo? ──
+    # The critical check: do these torques actually swing up MuJoCo?
     sim_traj = verify_open_loop(x_traj, u_traj, dt)
     print("MuJoCo final state (open-loop replay):", sim_traj[-1])
     err = float(np.linalg.norm(sim_traj[-1] - np.asarray(x_traj[-1])))

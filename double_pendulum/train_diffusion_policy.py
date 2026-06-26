@@ -2,7 +2,7 @@
 Train the conditional Diffusion Policy on the double-pendulum expert
 trajectories produced by generate_dataset.py.
 
-Architecture is selectable and SELF-DESCRIBING in the checkpoint:
+Architecture is selectable and self-describing in the checkpoint:
     python train_diffusion_policy.py --arch mlp
     python train_diffusion_policy.py --arch transformer
 
@@ -41,7 +41,7 @@ from diffusion_models.diffusion_policy import (
 )
 
 
-# ── Config (defaults; some overridable via CLI) ──────────────────────────────
+# Config (defaults; some overridable via CLI)
 H5_PATH      = "double_pendulum/results/expert_trajectories.h5"
 OUT_DIR      = "double_pendulum/results"
 CKPT_DIR     = os.path.join(OUT_DIR, "checkpoints")   # final ckpts -> checkpoints/<arch>/
@@ -66,7 +66,7 @@ SEED         = 42
 # Real upright-hold rollouts now come from generate_tvlqr_dataset.py (--n-hold),
 # which capture the deviation->corrective-torque map. The old synthetic hack just
 # repeated each trajectory's final state/action, teaching the exact fixed point
-# but NOT how to recover -- so it's disabled (0) in favor of the real data.
+# but not how to recover -- so it's disabled (0) in favor of the real data.
 HOLD_STEPS   = 0
 
 # MLP-specific
@@ -82,7 +82,7 @@ TF_DROPOUT   = 0.0
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-# ── Dataset ──────────────────────────────────────────────────────────────────
+# Dataset
 class DiffusionPolicyDataset(Dataset):
     """Slices expert trajectories into (cond, action_seq) windows + normalizes."""
 
@@ -111,7 +111,7 @@ class DiffusionPolicyDataset(Dataset):
             raise RuntimeError(f"No trajectories found in {h5_path}")
 
         if stats is None:
-            # Compute normalization stats from THIS subset (the train fold).
+            # Compute normalization stats from this subset (the train fold).
             all_vels    = np.concatenate([s[:, 2:] for s, _ in trajs], axis=0)
             all_actions = np.concatenate([a for _, a in trajs], axis=0)
             self.vel_min,    self.vel_max    = all_vels.min(0),    all_vels.max(0)
@@ -214,7 +214,7 @@ class DiffusionPolicyDataset(Dataset):
         return torch.from_numpy(cond), torch.from_numpy(acts)
 
 
-# ── Train/val/test split (at the trajectory level, before any window slicing) ─
+# Train/val/test split (at the trajectory level, before any window slicing)
 def train_val_test_keys(h5_path, ratios=SPLIT_RATIOS, seed=SEED):
     """Partition trajectory keys into (train, val, test) by the given ratios.
 
@@ -294,11 +294,11 @@ def eval_loss_keep_rng(policy, loader, scheduler, timesteps, seed=0):
             torch.cuda.set_rng_state_all(cuda_state)
 
 
-# ── Network builder (single source of truth, shared with eval) ───────────────
+# Network builder (shared with eval)
 def build_network(arch, cond_dim, horizon=H, action_dim=NU):
     """
     Returns (network, net_kwargs). net_kwargs is everything needed to rebuild
-    the SAME architecture later -- it gets stored in the checkpoint.
+    the same architecture later -- it gets stored in the checkpoint.
     """
     if arch == "mlp":
         kwargs = {"horizon": horizon, "action_dim": action_dim,
@@ -356,7 +356,7 @@ def build_summary(arch, epochs, train_keys, val_keys, test_keys, history,
     }
 
 
-# ── Warm-start ───────────────────────────────────────────────────────────────
+# Warm-start
 def find_last_checkpoint(arch=None):
     """Path to the most recently modified diffusion checkpoint, or None.
 
@@ -397,7 +397,7 @@ def load_warmstart(network, path, arch, cond_dim):
     network.load_state_dict(state)
 
 
-# ── Train ────────────────────────────────────────────────────────────────────
+# Train
 def main():
     # Declared up front (before the argparse defaults read these names) so the
     # later reassignment from CLI args is legal; see the override block below.
@@ -416,7 +416,7 @@ def main():
                          "'auto' (default) = the most recent diffusion checkpoint "
                          "(falls back to from-scratch if none exists); a path = that "
                          "checkpoint; 'none'/'off' = always train from scratch")
-    # ── Sweep knobs (override the module defaults from the CLI) ──
+    # Sweep knobs (override the module defaults from the CLI)
     ap.add_argument("--timesteps", type=int, default=TIMESTEPS,
                     help="diffusion denoising steps -- the main success-rate / "
                          "inference-cost knob")
@@ -456,7 +456,7 @@ def main():
             if args.ckpt is None else Path(args.ckpt))
     ckpt.parent.mkdir(parents=True, exist_ok=True)
 
-    # ── Split BEFORE loading: 70/15/15 train/val/test at the trajectory level ──
+    # Split before loading: 70/15/15 train/val/test at the trajectory level
     train_keys, val_keys, test_keys = train_val_test_keys(H5_PATH, SPLIT_RATIOS, SEED)
     print(f"Split (seed={SEED}): {len(train_keys)} train / {len(val_keys)} val / "
           f"{len(test_keys)} test trajectories "
@@ -500,7 +500,7 @@ def main():
     scheduler = Scheduler(num_steps=TIMESTEPS, device=DEVICE)
     network, net_kwargs = build_network(args.arch, dataset.cond_dim, horizon=H)
 
-    # Warm start: load weights into the freshly built network BEFORE wrapping it
+    # Warm start: load weights into the freshly built network before wrapping it
     # in DiffusionPolicy, so the policy's EMA copy (a deepcopy made at init) also
     # starts from the checkpoint instead of random init. Default is 'auto' = pick
     # up the last previous checkpoint; 'none'/'off' forces a from-scratch run.
@@ -545,13 +545,13 @@ def main():
 
     policy.train(loader, epochs=args.epochs, on_epoch_end=on_epoch_end)
 
-    # ── Held-out TEST loss: single final pass on data never seen in train/val ──
+    # Held-out TEST loss: single final pass on data never seen in train/val
     test_loss = float("nan")
     if test_loader is not None:
         test_loss = validation_loss(policy, test_loader, scheduler, TIMESTEPS)
         print(f"Test loss (EMA, noise-pred MSE): {test_loss:.5f}")
 
-    # ── Persist loss curves + finalize the run summary in the losses folder ──
+    # Persist loss curves + finalize the run summary in the losses folder
     curve_path = Path(LOSS_DIR) / f"loss_history_{args.arch}.csv"
     with open(curve_path, "w", newline="") as fp:
         w = csv.writer(fp)
@@ -563,12 +563,12 @@ def main():
     summary = write_summary(test_loss)
     print(f"Saved loss curve to {curve_path} and summary to {summary_path}")
 
-    # Final SELF-DESCRIBING checkpoint (EMA weights -> smoother inference
+    # Final self-describing checkpoint (EMA weights -> smoother inference
     # controller; eval loads model_state unchanged).
     torch.save(build_checkpoint(policy, args.arch, net_kwargs, dataset.cond_dim), ckpt)
     print(f"Saved checkpoint to {ckpt}")
 
-    # ── Sidecar files next to the weights: hyperparameters + normalization ──
+    # Sidecar files next to the weights: hyperparameters + normalization
     # The hparams JSON makes every checkpoint self-describing for the sweep
     # comparison (compare_diffusion_models.py reads it to label each run by the
     # settings that produced it). The stats copy makes the checkpoint
