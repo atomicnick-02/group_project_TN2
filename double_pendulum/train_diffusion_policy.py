@@ -53,12 +53,12 @@ SPLIT_RATIOS = (0.7, 0.15, 0.15)                      # train / val / test
 
 NX, NU       = 4, 2          # raw state dim (from HDF5), action dim
 NX_FEAT      = 6             # feature dim: [sin(q1), cos(q1), sin(q2), cos(q2), dq1, dq2]
-K            = 6             # observation-history length
-H            = 8             # action prediction horizon
+K            = 4             # observation-history length
+H            = 10             # action prediction horizon
 USE_GOAL     = True          # append goal features to conditioning vector
 X_GOAL       = np.array([np.pi, 0.0, 0.0, 0.0], dtype=np.float32)  # upright
 
-TIMESTEPS    = 100
+TIMESTEPS    = 10
 EPOCHS       = 200
 BATCH_SIZE   = 256
 LR           = 1e-4
@@ -75,7 +75,7 @@ MLP_HIDDEN   = 256
 # Transformer-specific
 TF_D_MODEL   = 128
 TF_HEADS     = 4
-TF_LAYERS    = 4
+TF_LAYERS    = 2
 TF_FF        = 256
 TF_DROPOUT   = 0.0
 
@@ -333,6 +333,47 @@ def build_checkpoint(policy, arch, net_kwargs, cond_dim):
     }
 
 
+# ── Warm-start ───────────────────────────────────────────────────────────────
+def find_last_checkpoint(arch=None):
+    """Path to the most recently modified diffusion checkpoint, or None.
+
+    Looks in the per-arch checkpoint folders (checkpoints/<arch>/) and the
+    legacy results/ root. If `arch` is given and that arch's folder holds
+    checkpoints, those win; otherwise the newest across all locations is used.
+    """
+    arch_dir = Path(CKPT_DIR) / arch if arch else None
+    if arch_dir is not None and arch_dir.exists():
+        cands = list(arch_dir.glob("*.pt"))
+        if cands:
+            return max(cands, key=lambda p: p.stat().st_mtime)
+    cands = list(Path(CKPT_DIR).rglob("*.pt")) + list(Path(OUT_DIR).glob("diffusion_policy*.pt"))
+    return max(cands, key=lambda p: p.stat().st_mtime) if cands else None
+
+
+def load_warmstart(network, path, arch, cond_dim):
+    """Initialize `network` IN PLACE from a checkpoint (weights only).
+
+    Warm start = weights only: the caller builds a fresh optimizer, LR schedule
+    and EMA from these weights. Verifies arch + cond_dim match so the state_dict
+    loads strictly. Prefers the raw trainable weights (model_state_raw) -- the
+    natural starting point for continued training -- and falls back to the EMA
+    weights (model_state) if that's all the checkpoint has.
+    """
+    ckpt = torch.load(path, map_location=DEVICE, weights_only=False)
+    cfg  = ckpt.get("config", {})
+    ck_arch, ck_cond = cfg.get("arch"), cfg.get("cond_dim")
+    if ck_arch is not None and ck_arch != arch:
+        raise SystemExit(f"--warmstart arch mismatch: checkpoint is '{ck_arch}', --arch is '{arch}'")
+    if ck_cond is not None and ck_cond != cond_dim:
+        raise SystemExit(f"--warmstart cond_dim mismatch: checkpoint {ck_cond} vs current {cond_dim}")
+    state = ckpt.get("model_state_raw")
+    if state is None:
+        state = ckpt.get("model_state")
+    if state is None:
+        raise SystemExit(f"--warmstart: no model weights found in {path}")
+    network.load_state_dict(state)
+
+
 # ── Train ────────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
@@ -344,6 +385,11 @@ def main():
                     help="compute & display held-out validation loss every N epochs (0 = off)")
     ap.add_argument("--save-every", type=int, default=20,
                     help="save an intermediate checkpoint every N epochs (0 = off)")
+    ap.add_argument("--warmstart", default="auto",
+                    help="initialize weights from a checkpoint before training. "
+                         "'auto' (default) = the most recent diffusion checkpoint "
+                         "(falls back to from-scratch if none exists); a path = that "
+                         "checkpoint; 'none'/'off' = always train from scratch")
     args = ap.parse_args()
 
     torch.manual_seed(SEED)
@@ -385,6 +431,24 @@ def main():
 
     scheduler = Scheduler(num_steps=TIMESTEPS, device=DEVICE)
     network, net_kwargs = build_network(args.arch, dataset.cond_dim)
+
+    # Warm start: load weights into the freshly built network BEFORE wrapping it
+    # in DiffusionPolicy, so the policy's EMA copy (a deepcopy made at init) also
+    # starts from the checkpoint instead of random init. Default is 'auto' = pick
+    # up the last previous checkpoint; 'none'/'off' forces a from-scratch run.
+    if args.warmstart and args.warmstart.lower() not in ("none", "off"):
+        if args.warmstart == "auto":
+            ws = find_last_checkpoint(args.arch)
+            if ws is None:
+                print("Warm-start: no previous checkpoint found, training from scratch.")
+        else:
+            ws = Path(args.warmstart)
+            if not ws.exists():
+                raise SystemExit(f"--warmstart: no checkpoint found at '{ws}'")
+        if ws is not None:
+            load_warmstart(network, ws, args.arch, dataset.cond_dim)
+            print(f"Warm-start: initialized '{args.arch}' weights from {ws}")
+
     policy = DiffusionPolicy(
         scheduler=scheduler, network=network, device=DEVICE,
         timesteps=TIMESTEPS, horizon=H, action_dim=NU, learning_rate=LR,

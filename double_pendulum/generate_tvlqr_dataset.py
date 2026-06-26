@@ -188,14 +188,14 @@ def sample_upright_x0(rng):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n-episodes", type=int, default=300)
-    ap.add_argument("--n-hold", type=int, default=200,
+    ap.add_argument("--n-episodes", type=int, default=900)
+    ap.add_argument("--n-hold", type=int, default=50,
                     help="extra rollouts started perturbed around upright, to teach"
                          " the stabilizing (deviation->torque) gain")
-    ap.add_argument("--hold-steps", type=int, default=60,   # 60*0.05 = 3 s
+    ap.add_argument("--hold-steps", type=int, default=10,   # 60*0.05 = 3 s
                     help="length of each upright-hold rollout")
-    ap.add_argument("--episode-steps", type=int, default=120)   # 120*0.05 = 6 s
-    ap.add_argument("--perturb", type=float, default=0.10,
+    ap.add_argument("--episode-steps", type=int, default=200)   # 120*0.05 = 6 s
+    ap.add_argument("--perturb", type=float, default=0.15,
                     help="swing-up-phase action-noise std as a fraction of max torque")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=str(results_dir / "expert_trajectories.h5"))

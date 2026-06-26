@@ -136,6 +136,7 @@ class DiffusionController:
         self._hist = np.concatenate([self._hist[1:], xn[None]], axis=0)
 
         if not self._queue:
+            self.policy.model.eval()
             cond = self._hist.reshape(-1)
             if self.use_goal:
                 goal_n = self._norm_s(np.array([np.pi, 0, 0, 0], dtype=np.float32))
@@ -232,6 +233,7 @@ class BCController:
     def action(self, x):
         f  = self._feat(np.asarray(x, dtype=np.float32))
         ft = self.torch.from_numpy(f[None])                       # (1, 6)
+        self.model.eval()
         with self.torch.no_grad():
             a_seq = self.model(ft).cpu().numpy()[0]               # (H, nu) normalized
         return self._denorm_a(a_seq[0])
@@ -394,5 +396,5 @@ if __name__ == "__main__":
         vel_tol=args.vel_tol,
         max_steps=args.max_steps,
         realtime=not args.no_realtime,
-        ckpt=args.ckpt,
+        # ckpt=args.ckpt,
     )

@@ -1,0 +1,16 @@
+{
+  "arch": "transformer",
+  "epochs": 200,
+  "seed": 42,
+  "split_ratios": [
+    0.7,
+    0.15,
+    0.15
+  ],
+  "n_train_traj": 251,
+  "n_val_traj": 54,
+  "n_test_traj": 53,
+  "final_train_loss": 0.04065369736663131,
+  "final_val_loss": 0.040172653705007416,
+  "test_loss": 0.04931953934634604
+}
