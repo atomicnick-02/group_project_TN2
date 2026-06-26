@@ -12,8 +12,11 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # ── Config (defaults; some overridable via CLI) ──────────────────────────────
-H5_PATH      = "C:\\Users\\theod\\Downloads\\group_project_TN2-pendulum\\group_project_TN2-pendulum\\double_pendulum\\results/expert_trajectories.h5"
-OUT_DIR      = "C:\\Users\\theod\\Downloads\\group_project_TN2-pendulum\\group_project_TN2-pendulum\\double_pendulum\\results_bc"
+# Paths are resolved relative to this file so the script is portable across machines.
+THIS_DIR     = Path(__file__).resolve().parent
+REPO_ROOT    = THIS_DIR.parent
+H5_PATH      = str(REPO_ROOT / "double_pendulum" / "results" / "expert_trajectories.h5")
+OUT_DIR      = str(THIS_DIR)                         # write checkpoints/stats next to this script
 # CKPT_PATH    = os.path.join(OUT_DIR, "diffusion_policy.pt")
 MODEL_N = 6#3 current best
 STATS_PATH   = os.path.join(OUT_DIR, f"norm_stats_{MODEL_N}.json")
@@ -210,7 +213,7 @@ def train(data, model, loss_fn, optimizer, batch_size):
         train_loss += loss.item()
 
 
-    return train_loss / batch
+    return train_loss / len(data)
 
 def evaluate(dataloader, model, loss_fn):
 
@@ -280,11 +283,13 @@ def main():
         train_loss_buffer.append(train(loader, model, loss_fn, optimizer, BATCH_SIZE))
         test_loss_buffer.append(evaluate(test_loader, model, loss_fn))
 
-    plt.plot(train_loss_buffer)
-    plt.plot(test_loss_buffer)
+    plt.plot(train_loss_buffer, label="train")
+    plt.plot(test_loss_buffer, label="test")
     plt.title("Training Loss")
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
+    plt.legend()
+    plt.savefig(os.path.join(OUT_DIR, f"training_loss_{MODEL_N}.png"))
     plt.show()
     log_f = open(LOG_F_PATH,"w+")
     log_f.write('epoch,Training_Loss,Test_Loss\n')

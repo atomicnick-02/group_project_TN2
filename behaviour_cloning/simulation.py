@@ -22,10 +22,12 @@ def feat_transform(x, vel_min, vel_range):
 	q1 = x[0]
 	q2 = x[1]
 	v_norm  = 2.0 * (x[2:] - vel_min) / vel_range - 1.0
-	feat = np.row_stack([np.sin(q1), np.cos(q1), np.sin(q2), np.cos(q2), v_norm[0], v_norm[1]]) 
+	feat = np.vstack([np.sin(q1), np.cos(q1), np.sin(q2), np.cos(q2), v_norm[0], v_norm[1]])
 	return feat
 
 current_dir = Path(__file__).resolve().parent
+repo_root = current_dir.parent
+XML_PATH = repo_root / "double_pendulum" / "dp.xml"
 
 def wrap_to_pi(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
@@ -36,7 +38,7 @@ class DoublePendulumEnv(gym.Env):
 
 	def __init__(self, render_mode=None, frame_skip=10):
 		super().__init__()
-		self.model = mujoco.MjModel.from_xml_path(str(current_dir / "dp.xml"))
+		self.model = mujoco.MjModel.from_xml_path(str(XML_PATH))
 		self.data = mujoco.MjData(self.model)
 		self.frame_skip = frame_skip
 		self.dt = self.model.opt.timestep * frame_skip
@@ -114,66 +116,67 @@ class DoublePendulumEnv(gym.Env):
 
 
 if __name__ == "__main__":
-	import time
-	with open(f'C:/Users/theod/Downloads/group_project_TN2-pendulum/group_project_TN2-pendulum/double_pendulum/results_bc/norm_stats_{MODEL_N}.json', 'r') as file:
+	# Normalization stats: prefer the model-specific file, fall back to the generic one.
+	stats_path = current_dir / f"norm_stats_{MODEL_N}.json"
+	if not stats_path.exists():
+		stats_path = current_dir / "norm_stats.json"
+	with open(stats_path, 'r') as file:
 		data = json.load(file)
 	action_min = np.array(data['action_min'])
 	action_range = np.array(data['action_max']) - np.array(data['action_min'])
 	vel_min = np.array(data['vel_min'])
 	vel_range = np.array(data['vel_max']) - np.array(data['vel_min'])
-	
-	
-	
+
+	ckpt_path = current_dir / f"bc_policy_{MODEL_N}.pt"
 	model = BCPolicyModel(H)
-	
-	model.load_state_dict(torch.load(f"C:/Users/theod/Downloads/group_project_TN2-pendulum/group_project_TN2-pendulum/double_pendulum/results_bc/bc_policy_{MODEL_N}.pt",
+	model.load_state_dict(torch.load(str(ckpt_path),
 												   map_location=lambda storage, loc: storage))
 	model.eval()
-	# action_buffer = np.array([[0.0, 0.0, 0.0]])
+
 	angle_tol = 0.2
-	max_h = 7
 	max_holding_time = 10
-	# h = 8
-	env = DoublePendulumEnv()#render_mode="human")
-	successes = np.zeros((max_h,))
-	for i in range(max_h + 1):
-		h = i
-	
-		for episode in tqdm(range(MAX_EPISODES)):
-			
-			obs, _ = env.reset()
-			env.data.qpos = [np.random.uniform(-np.pi, np.pi), np.random.uniform(-np.pi, np.pi)]
-			env.data.qvel = [np.random.uniform(-4.0, 4.0), np.random.uniform(-4.0, 4.0)]
+	env = DoublePendulumEnv()  # render_mode="human" to watch
+
+	# Sweep the executed-chunk horizon: replan every `exec_h` steps and execute the
+	# first `exec_h` actions of the predicted chunk before querying the policy again.
+	exec_horizons = list(range(1, H + 1))          # 1 .. H
+	successes = np.zeros(len(exec_horizons))
+	for hi, exec_h in enumerate(exec_horizons):
+		for episode in tqdm(range(MAX_EPISODES), desc=f"horizon {exec_h}"):
+			env.reset()
+			# Randomize the initial state, then re-evaluate kinematics so obs is fresh.
+			env.data.qpos[:] = [np.random.uniform(-np.pi, np.pi), np.random.uniform(-np.pi, np.pi)]
+			env.data.qvel[:] = [np.random.uniform(-4.0, 4.0), np.random.uniform(-4.0, 4.0)]
+			mujoco.mj_forward(env.model, env.data)
+			obs = env._get_obs()
+
+			holding_time = 0
+			action_chunk = None
+			step_in_chunk = exec_h                  # force a replan on the first step
 			for _ in range(200):
-				state = feat_transform(obs, vel_min, vel_range)
-				state = torch.from_numpy(state.T).float()  # add batch dimension
-				if h == i + 1 or i == 0:
-					h = 0
-					action_norm = model(state).squeeze(0).detach().numpy()  # remove batch dimension
-				action = denorm_action(action_norm[h,:], action_range, action_min)
-				# test = env.action_space.sample()
+				if step_in_chunk >= exec_h:
+					state = feat_transform(obs, vel_min, vel_range)
+					state = torch.from_numpy(state.T).float()
+					action_chunk = model(state).squeeze(0).detach().numpy()
+					step_in_chunk = 0
+				action = denorm_action(action_chunk[step_in_chunk, :], action_range, action_min)
 				obs, reward, terminated, truncated, _ = env.step(action)
-				h += 1
-				# time.sleep(env.dt)
+				step_in_chunk += 1
+
 				angles = obs[:2]
 				if abs(wrap_to_pi(angles[0] - np.pi)) + abs(wrap_to_pi(angles[1] - 0)) < angle_tol:
-					# print(f"Goal reached in {env.data.time:.2f} seconds.")
 					holding_time += 1
 				else:
 					holding_time = 0
-					
-				# print(f"shoulder: {angles[0]:.2f}, elbow: {angles[1]:.2f}, reward: {reward:.2f}")
-				time.sleep(0.01)  # add a small delay to make the simulation visible   
+
 				if holding_time >= max_holding_time:
-					# print(f"Goal held for {holding_time} steps. Ending episode.")
-					successes[i] += 1
+					successes[hi] += 1
 					break
-					
 
 	print("Simulation finished.")
 	env.close()
 	successes /= MAX_EPISODES
-	labels = [f"{i+1}" for i in range(successes.shape[0])]
+	labels = [str(h) for h in exec_horizons]
 
 	# Create the bar chart (without plt.figure() as per guidelines)
 	plt.bar(labels, successes, color='blue', edgecolor='black')
@@ -181,10 +184,8 @@ if __name__ == "__main__":
 	plt.ylabel('Success rate')
 	plt.title('Success rate for different horizon lengths')
 	plt.tight_layout()
+	plt.savefig(str(current_dir / 'bar_graph.png'))
 	plt.show()
-
-	# Save the plot
-	plt.savefig('bar_graph.png')
 	plt.close()
-	df = pd.DataFrame(successes, columns=['Values'])
-	df.to_csv('data_pandas.csv', index=True)
+	df = pd.DataFrame({'horizon': labels, 'success_rate': successes})
+	df.to_csv(str(current_dir / 'data_pandas.csv'), index=False)
