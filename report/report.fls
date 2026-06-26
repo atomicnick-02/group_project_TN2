@@ -1,6 +1,6 @@
 PWD /home/nickv/Documents/School/group_project_TN2/report
 INPUT /home/nickv/.miktex/texmfs/data/miktex/data/le/pdftex/pdflatex.fmt
-INPUT report.tex
+INPUT /home/nickv/Documents/School/group_project_TN2/report/report.tex
 OUTPUT report.log
 INPUT /home/nickv/.miktex/texmfs/install/tex/latex/base/article.cls
 INPUT /home/nickv/.miktex/texmfs/install/tex/latex/base/article.cls

@@ -70,7 +70,8 @@ in the \textbf{double pendulum swingup task} and the \textbf{stacking problem}.
 
 \section{Behavioural Cloning - Double Pendulum Case}
 \subsection{Behavioural Cloning model and policy training}
-We trained a neural network with a horizon of $7$ actions ahead of the current one. Therefore the policy the agent attempts to learn is:
+We trained a neural network with a horizon of $7$ actions ahead of the current one. 
+Therefore the policy the agent attempts to learn is:
 
 \begin{equation}
     \pi = (a_{t:t+7}|s_t)
@@ -190,7 +191,7 @@ when stabilizing the unstable upright equilibrium.
 
 \subsection{Generating Dataset}
 Both learning methods are trained by imitation, so they are only ever as good as
-the expert demonstrations they are shown. We therefore generate the dataset with a
+the expert demonstrations they are shown. We, therefore, generate the dataset with a
 classical optimal-control pipeline: we (i) define a physics model of the double
 pendulum, (ii) solve a trajectory-optimization problem for a nominal swing-up,
 (iii) wrap that nominal in a time-varying LQR (TVLQR) feedback controller, and
@@ -200,7 +201,7 @@ both the behavioural-cloning and diffusion-policy models clone.
 
 \subsubsection{Dynamics Model}
 The state is $x = [q_1, q_2, \dot{q}_1, \dot{q}_2]^\top$, where $q_1$ is the
-shoulder and $q_2$ the elbow angle, and the control $u = [u_1, u_2]^\top$ collects
+shoulder and $q_2$ the elbow angle, and the control $u = [u_1, u_2]^\top$ consists of
 the two joint torques. We use $q_1 = 0$ for the stable hanging-down configuration
 and $q_1 = \pi$ for the upright goal. The planar two-link equations of motion are
 \begin{equation}
@@ -211,7 +212,7 @@ with mass matrix $M(q)$, Coriolis/centrifugal matrix $C(q,\dot{q})$, gravity
 vector $G(q)$, viscous damping $b$ and Coulomb friction $f$. The non-smooth dry
 friction $\operatorname{sign}(\dot{q})$ is replaced by a smooth
 $\tanh(\dot{q}/\epsilon)$ ($\epsilon = 0.05$ rad/s) so the term is differentiable
-for the gradient-based solver. Crucially, every physical parameter (masses,
+for the gradient-based solver. Crucially, every physical parameters (masses,
 lengths, link inertias, damping and friction) is read \emph{directly} from the
 MuJoCo model file \file{dp.xml}, so the planner and the simulator used for
 deployment describe the exact same system and cannot silently drift apart.
@@ -227,18 +228,22 @@ $z = [x_0, \ldots, x_N, u_0, \ldots, u_N]$, and we minimize the quadratic cost
        + (x_N - x_g)^\top Q_f\,(x_N - x_g),
 \end{equation}
 subject to the trapezoidal collocation (dynamics) defects, the boundary
-conditions, and the actuator torque limits:
+conditions, and the actuator torque limits shown below:
 \begin{align}
   x_{k+1} - x_k - \tfrac{\Delta t}{2}\big(f(x_k,u_k) + f(x_{k+1},u_{k+1})\big) &= 0,
     \quad k = 0,\ldots,N-1, \\
   x_0 = x_{\text{init}}, \quad x_N &= x_g = [\pi, 0, 0, 0]^\top, \\
   |u_k| &\le \tau_{\max}.
 \end{align}
-The objective gradient and the constraint Jacobian are obtained by automatic
-differentiation (JAX), and the problem is compiled once and reused across solves.
-The weighting matrices $Q, R$ trade off tracking accuracy against control effort;
-sweeping them, together with the peak-torque limit and the initial condition,
-produces a diverse family of nominal swing-ups rather than a single trajectory.
+The constraint Jacobian is obtained by automatic differentiation (JAX) while the objective gradient
+is supplied analytically, and the compiled functions are reused across solves. As a check, the
+
+optimized torques are replayed open-loop in the MuJoCo simulator: the simulated final state lands
+on the planned upright, confirming that the planner and the simulator describe the same system.
+The weighting matrices Q, R trade off tracking accuracy against control effort. We solve for a
+single nominal swing-up and reuse it for every rollout; the variety in the dataset comes not from a
+family of optimal trajectories but from rolling the tracking controller out from many randomized
+initial conditions, with the exploration noise described below..
 
 \subsubsection{TVLQR Tracking and Closed-Loop Rollout}
 A nominal trajectory $(x^\ast, u^\ast)$ on its own is open-loop and brittle: applied
@@ -990,7 +995,6 @@ on the pendulum. In short, BC is the simpler and cheaper choice for smooth contr
 small, balance-type problems, and the diffusion policy is the better choice for larger
 tasks such as manipulation, where the same job can be done in several different ways.
 
-\clearpage
 \begin{thebibliography}{9}
 \bibitem{mandlekar2023mimicgen}
 A. Mandlekar, S. Nasiriany, B. Wen, I. Akinola, Y. Narang, L. Fan, Y. Zhu, and D. Fox, ``MimicGen: A Data Generation System for Scalable Robot Learning using Human Demonstrations,'' in \emph{7th Annual Conference on Robot Learning}, 2023.

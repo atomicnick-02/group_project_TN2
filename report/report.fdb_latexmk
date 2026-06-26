@@ -1,5 +1,5 @@
 # Fdb version 4
-["pdflatex"] 1782502130.79673 "report.tex" "report.pdf" "report" 1782502133.99812 0
+["pdflatex"] 1782504663.03589 "/home/nickv/Documents/School/group_project_TN2/report/report.tex" "report.pdf" "report" 1782504668.16071 0
   "/home/nickv/.miktex/texmfs/data/fonts/map/pdftex/pdftex.map" 1782490560.50614 107396 b071a70abdba3a9c6740c08494c56d1a ""
   "/home/nickv/.miktex/texmfs/data/fonts/pk/ljfour/jknappen/ec/dpi600/tcrm1095.pk" 1778781932.05131 12668 1428d13defb03841ea1955a18ac6591b ""
   "/home/nickv/.miktex/texmfs/data/miktex/data/le/pdftex/pdflatex.fmt" 1778408382.19842 10203374 968133167c13ad42af2ec8e85221e23d ""
@@ -125,6 +125,7 @@
   "/home/nickv/.miktex/texmfs/install/tex/latex/tools/array.sty" 1778265716.2659 15651 9d7c62df82cb29a555c00550babfe364 ""
   "/home/nickv/.miktex/texmfs/install/tex/latex/url/url.sty" 1776073867.52003 12796 8edb7d69a20b857904dd0ea757c14ec9 ""
   "/home/nickv/.miktex/texmfs/install/tex/latex/xcolor/xcolor.sty" 1778265723.60641 55384 b454dec21c2d9f45ec0b793f0995b992 ""
+  "/home/nickv/Documents/School/group_project_TN2/report/report.tex" 1782504665.88243 63876 1c24550228bc5304382a73c42b122cc9 ""
   "images/part1/neural network.png" 1782493736 377682 6a00d7d3147bcae2fbf7d9c8e6e1a16e ""
   "images/part1/plots_comp_bc_diffusion/example_controls.png" 1782491761.6219 119298 81cf9e71f67cef8ee8041a2e93c9f963 ""
   "images/part1/plots_comp_bc_diffusion/example_states.png" 1782491761.65485 143355 cf6dfddd7e71d04b0182b997c88112e7 ""
@@ -140,10 +141,10 @@
   "images/part2/stack_figures/stack_joint_cost_comparison.png" 1782483484 94687 6fcea2e1081924da65a3258817b1f569 ""
   "images/part2/stack_figures/stack_success_comparison.png" 1782483483 98289 5b2a9750fc45124edf8e2a41af7d3ce5 ""
   "images/part2/stack_three_environment.png" 1782336784 971339 28ec50ad6e9b2c579dcde0506ba70407 ""
-  "report.aux" 1782502133.84721 13206 a6ceaa5a9b6ab3724acd1356cce7fad0 "pdflatex"
-  "report.out" 1782502133.84721 6051 14d123d8a47c489d24e71dd0b67f9dec "pdflatex"
-  "report.tex" 1782502119.09858 63520 4de56139fd975de04a7a535a03a3f20c ""
-  "report.toc" 1782502133.84721 3304 22605da9d78bd01d9126ad0d5cf6f19f "pdflatex"
+  "report.aux" 1782504667.97837 13206 977f7927437438d458372efc3749e8ef "pdflatex"
+  "report.out" 1782504667.98171 6051 14d123d8a47c489d24e71dd0b67f9dec "pdflatex"
+  "report.tex" 1782504665.88243 63876 1c24550228bc5304382a73c42b122cc9 ""
+  "report.toc" 1782504667.98171 3304 22605da9d78bd01d9126ad0d5cf6f19f "pdflatex"
   (generated)
   "report.aux"
   "report.log"
