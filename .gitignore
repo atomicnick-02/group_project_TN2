@@ -4,3 +4,7 @@ gripper/assets/ycb/*
 gripper/assets/autodesk/*
 *.csv
 __pycache__/
+
+report/
+
+ai_project_venv/
