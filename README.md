@@ -26,7 +26,7 @@ root** so that `diffusion_models` and `simulation` import correctly:
 ## Docker
 Download the docker image:
 ```bash
-docker pull xaristeidou/double-pendulum:latest
+sudo docker pull xaristeidou/double-pendulum:latest
 ```
 
 Run the following:
@@ -37,6 +37,11 @@ xhost +local:docker
 Run docker container:
 ```bash
 sudo docker run -it --gpus all --rm -e DISPLAY=$DISPLAY -e MUJOCO_GL=glx -v /tmp/.X11-unix:/tmp/.X11-unix:rw xaristeidou/double-pendulum:latest
+```
+
+Then move to scripts folder:
+```bash
+cd double_pendulum
 ```
 
 ## Run order
@@ -171,28 +176,38 @@ sudo docker run -it --gpus all --rm -e DISPLAY=$DISPLAY -e MUJOCO_GL=glx -v /tmp
 
 ## Run the environments
 
-Single Stack (no goal):
+Single Stack BC:
+```bash
+python3 behaviour_clone_environment_run.py stack_d0
+```
+
+Single Stack Diffusion (no goal):
 ```bash
 python3 diffusion_policy_env_run.py stack_d0 --seed 42  --no-render --checkpoint ./checkpoints/diffusion_transformer_no_goal_stack_d0_best.pth
 ```
 
 <br>
 
-Single Stack (with goal): 
+Single Stack Diffusion (with goal): 
 ```bash
 python3 diffusion_policy_env_run.py stack_d0 --seed 42  --no-render --goal --checkpoint ./checkpoints/diffusion_transformer_with_goal_stack_d0_best.pth
 ```
 
+StackThree BC:
+```bash
+python3 behaviour_clone_environment_run.py stack_three_d0
+```
+
 <br>
 
-StackThree (no goal):
+StackThree Diffusion (no goal):
 ```bash
 python3 diffusion_policy_env_run.py stack_three_d0 --seed 42  --no-render --checkpoint ./checkpoints/diffusion_transformer_no_goal_stack_three_d0_best_V4.pth
 ```
 <br>
 
 
-StackThree (with goal):
+StackThree Diffusion (with goal):
 ```bash
 python3 diffusion_policy_env_run.py stack_three_d0 --seed 42 --goal  --no-render --checkpoint ./checkpoints/diffusion_transformer_with_goal_stack_three_d0_best_V2.pth
 ```
