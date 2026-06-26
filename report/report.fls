@@ -217,6 +217,20 @@ INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/amsfonts/symbols/msam1
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/amsfonts/symbols/msbm10.tfm
 OUTPUT report.toc
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmbx12.tfm
+INPUT ./images/part1/neural network.png
+INPUT ./images/part1/neural network.png
+INPUT ./images/part1/neural network.png
+INPUT ./images/part1/neural network.png
+INPUT ./images/part1/neural network.png
+INPUT ./images/part1/neural network.png
+INPUT ./images/part1/neural network.png
+INPUT ./images/part1/training_bc.png
+INPUT ./images/part1/training_bc.png
+INPUT ./images/part1/training_bc.png
+INPUT ./images/part1/training_bc.png
+INPUT ./images/part1/training_bc.png
+INPUT ./images/part1/training_bc.png
+INPUT ./images/part1/training_bc.png
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/jknappen/ec/tcrm1095.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmr9.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmti10.tfm
@@ -251,6 +265,20 @@ INPUT ./images/part1/plots_comp_bc_diffusion/example_controls.png
 INPUT ./images/part1/plots_comp_bc_diffusion/example_controls.png
 INPUT ./images/part1/plots_comp_bc_diffusion/example_controls.png
 INPUT ./images/part1/plots_comp_bc_diffusion/example_controls.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/architecture_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/architecture_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/architecture_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/architecture_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/architecture_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/architecture_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/architecture_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png
+INPUT ./images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmmi9.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmsy9.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/amsfonts/cmextra/cmex9.tfm

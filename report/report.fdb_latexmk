@@ -1,5 +1,5 @@
 # Fdb version 4
-["pdflatex"] 1782492840.57728 "/home/nickv/Documents/School/group_project_TN2/report/report.tex" "report.pdf" "report" 1782492846.20035 0
+["pdflatex"] 1782496872.96484 "/home/nickv/Documents/School/group_project_TN2/report/report.tex" "report.pdf" "report" 1782496876.19684 0
   "/home/nickv/.miktex/texmfs/data/fonts/map/pdftex/pdftex.map" 1782490560.50614 107396 b071a70abdba3a9c6740c08494c56d1a ""
   "/home/nickv/.miktex/texmfs/data/fonts/pk/ljfour/jknappen/ec/dpi600/tcrm1095.pk" 1778781932.05131 12668 1428d13defb03841ea1955a18ac6591b ""
   "/home/nickv/.miktex/texmfs/data/miktex/data/le/pdftex/pdflatex.fmt" 1778408382.19842 10203374 968133167c13ad42af2ec8e85221e23d ""
@@ -125,11 +125,15 @@
   "/home/nickv/.miktex/texmfs/install/tex/latex/tools/array.sty" 1778265716.2659 15651 9d7c62df82cb29a555c00550babfe364 ""
   "/home/nickv/.miktex/texmfs/install/tex/latex/url/url.sty" 1776073867.52003 12796 8edb7d69a20b857904dd0ea757c14ec9 ""
   "/home/nickv/.miktex/texmfs/install/tex/latex/xcolor/xcolor.sty" 1778265723.60641 55384 b454dec21c2d9f45ec0b793f0995b992 ""
-  "/home/nickv/Documents/School/group_project_TN2/report/report.tex" 1782492834.97376 55387 44835fcc1e476b0a5def1f47768448c3 ""
+  "/home/nickv/Documents/School/group_project_TN2/report/report.tex" 1782496869.19744 60377 eeae83c9fa20bb766f3bcea217de06ae ""
+  "images/part1/neural network.png" 1782493736 377682 6a00d7d3147bcae2fbf7d9c8e6e1a16e ""
   "images/part1/plots_comp_bc_diffusion/example_controls.png" 1782491761.6219 119298 81cf9e71f67cef8ee8041a2e93c9f963 ""
   "images/part1/plots_comp_bc_diffusion/example_states.png" 1782491761.65485 143355 cf6dfddd7e71d04b0182b997c88112e7 ""
   "images/part1/plots_comp_bc_diffusion/metrics_comparison.png" 1782491761.67173 133383 ba4b9d3f4a71e8c5d41cf9c661d821e9 ""
   "images/part1/plots_comp_bc_diffusion/robustness_vs_noise.png" 1782491761.68897 57259 3f0048122f69227d523d179f9e948a05 ""
+  "images/part1/plots_compare_diffusion_exec_steps/architecture_success_rate.png" 1782493278.94096 58012 d8defad987bce105a6d4b6a6647e95d0 ""
+  "images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png" 1782495801.53464 52336 4ed5752f7f8aea88865798fe5af365a3 ""
+  "images/part1/training_bc.png" 1782493979 32902 8d0f6cce76f08c0e8e84217b73eaa43e ""
   "images/part2/bc_training_loss_stack_three_d0_stack_three_d1.png" 1782376778 187706 1aba0f8a74b7992701e8f6c505e7c7bd ""
   "images/part2/stack_environment.png" 1782336784 971342 e807b5fdf3c78ee21488f5740ed07300 ""
   "images/part2/stack_figures/stack_effort_comparison.png" 1782483484 99767 90447090d3dc68316f9f53af8bea9d7c ""
@@ -137,10 +141,10 @@
   "images/part2/stack_figures/stack_joint_cost_comparison.png" 1782483484 94687 6fcea2e1081924da65a3258817b1f569 ""
   "images/part2/stack_figures/stack_success_comparison.png" 1782483483 98289 5b2a9750fc45124edf8e2a41af7d3ce5 ""
   "images/part2/stack_three_environment.png" 1782336784 971339 28ec50ad6e9b2c579dcde0506ba70407 ""
-  "report.aux" 1782492845.98317 10797 d30b1634129013aa355119187846dbfd "pdflatex"
-  "report.out" 1782492845.98317 5518 3be6f67c2ba9eb73d3c28d7998a8b8e3 "pdflatex"
-  "report.tex" 1782492834.97376 55387 44835fcc1e476b0a5def1f47768448c3 ""
-  "report.toc" 1782492845.98317 3090 05e2e0775273c12efcdc4bc20cde72f8 "pdflatex"
+  "report.aux" 1782496876.07418 13149 ae3e094937ce9792d5f0bed2aadaa0d4 "pdflatex"
+  "report.out" 1782496876.07418 6133 caa6f7e4b37c96b4c445ce0bb8737577 "pdflatex"
+  "report.tex" 1782496869.19744 60377 eeae83c9fa20bb766f3bcea217de06ae ""
+  "report.toc" 1782496876.07418 3319 8bd76332e52902851c831dac7e217b78 "pdflatex"
   (generated)
   "report.aux"
   "report.log"
