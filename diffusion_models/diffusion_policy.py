@@ -107,11 +107,9 @@ class TrajectoryTransformer(nn.Module):
         self.horizon    = horizon
         self.action_dim = action_dim
         self.d_model    = d_model
-
         # Project a single action (nu,) to a token, and learn its position in the chunk.
         self.action_in  = nn.Linear(action_dim, d_model)
         self.pos_embed  = nn.Parameter(torch.zeros(1, horizon, d_model))
-
         # Timestep token: sinusoidal embed -> d_model
         self.time_embed = nn.Sequential(
             SinusoidalTimeEmbedding(d_model),
@@ -126,6 +124,7 @@ class TrajectoryTransformer(nn.Module):
             nn.SiLU(),
             nn.Linear(d_model, d_model),
         )
+        
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, nhead=n_heads, dim_feedforward=dim_feedforward,
@@ -142,7 +141,6 @@ class TrajectoryTransformer(nn.Module):
         a_tok = self.action_in(a_noisy) + self.pos_embed       # (batch, H, d_model)
         t_tok = self.time_embed(t).unsqueeze(1)                # (batch, 1, d_model)
         c_tok = self.cond_embed(cond).unsqueeze(1)             # (batch, 1, d_model)
-
         # Prepend the two context tokens; attention is full (no mask needed).
         tokens = torch.cat([t_tok, c_tok, a_tok], dim=1)       # (batch, H+2, d_model)
         out    = self.encoder(tokens)

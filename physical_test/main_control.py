@@ -32,11 +32,11 @@ for _p in (_THIS, _REPO):
         sys.path.insert(0, str(_p))
 
 # Diffusion policy:
-# DEFAULT_CKPT = _THIS / "architectures" / "diffusion" / "diffusion_T5.pt"
-# DEFAULT_STS  = _THIS / "architectures" / "diffusion" / "norm_stats.json"
+DEFAULT_CKPT = _THIS / "architectures" / "diffusion" / "diffusion_T5.pt"
+DEFAULT_STS  = _THIS / "architectures" / "diffusion" / "norm_stats.json"
 # BC policy:
-DEFAULT_CKPT = _THIS / "architectures" / "bc" / "bc_policy_3.pt"
-DEFAULT_STS  = _THIS / "architectures" / "bc" / "norm_stats.json"
+# DEFAULT_CKPT = _THIS / "architectures" / "bc" / "bc_policy_3.pt"
+# DEFAULT_STS  = _THIS / "architectures" / "bc" / "norm_stats.json"
 # Diffusion-policy controller
 class DiffusionController:
 

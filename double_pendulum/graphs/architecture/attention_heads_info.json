@@ -1,0 +1,24 @@
+{
+  "traj": "traj_347",
+  "t_index": 190,
+  "traj_len": 200,
+  "diffusion_step": 1,
+  "timesteps": 20,
+  "horizon": 10,
+  "n_layers": 2,
+  "n_heads": 4,
+  "token_order": [
+    "t",
+    "cond",
+    "a1",
+    "a2",
+    "a3",
+    "a4",
+    "a5",
+    "a6",
+    "a7",
+    "a8",
+    "a9",
+    "a10"
+  ]
+}
