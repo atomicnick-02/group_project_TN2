@@ -74,16 +74,36 @@
   \end{enumerate}
 \end{frame}
 
-\begin{frame}{1. Behavioural Cloning model}
+\begin{frame}{1. Behavioural Cloning -  Network Architecture}
+  \begin{columns}[T]
+    \begin{column}{0.33\textwidth}
+      \begin{itemize}
+        \item Input: feature transform $\phi(s_t)\in\mathbb{R}^{6}$
+        \item 4 hidden fully-connected layers, $\tanh$, dropout with probability $0.2$
+        \item Output $16 \to$ reshaped to $8\times2$ torques
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.66\textwidth}
+      \centering
+      \includegraphics[width=\linewidth]{images/part1/neural network.png}\\
+      {\scriptsize BC Model architecture.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{2. BC - Training}
   \begin{columns}[T]
     \begin{column}{0.55\textwidth}
       Learn $\pi = (a_{t:t+7}\mid s_t)$ — an 8-step action chunk.
       \begin{itemize}
-        \item Input: feature transform $\phi(s_t)\in\mathbb{R}^{6}$
-        \item 4 hidden fully-connected layers, $\tanh$, dropout $20\%$
-        \item Output $16 \to$ reshaped to $8\times2$ torques
-        \item Normalise actions \& velocities; $90/10$ train/val
+      \item Wrap-safe angular features
+          $\phi=[\sin q_1,\cos q_1,\dots,\tilde{\dot {q}}_2]\in\mathbb{R}^{6}$
+        \item Min--max normalise to $[-1,1]$ actions and velocities (stats saved)
+        \item $90/10$ train/val
         \item MSE loss, Adam $10^{-3}$, early stop (no overfit)
+        \item 512 batch size
+        \item 400 epochs
+        
       \end{itemize}
     \end{column}
     \begin{column}{0.45\textwidth}
@@ -137,9 +157,8 @@
     \begin{column}{0.54\textwidth}
       \textbf{Representation}
       \begin{itemize}
-        \item Wrap-safe angular features
-          $\phi=[\sin q,\cos q,\dots,\tilde{\dot q}]\in\mathbb{R}^{6}$
-        \item Min--max normalise to $[-1,1]$ (stats saved)
+        \item Wrap safe angular features $\phi$
+        \item Min--max normalise to $[-1,1]$ actions and velocities (stats saved)
         \item $c=$ last $K{=}4$ states $+$ goal $\in\mathbb{R}^{30}$
       \end{itemize}
       \textbf{Network} $\epsilon_\theta$
@@ -179,16 +198,22 @@
 
 \begin{frame}{5. Comparison — robustness \& ablations}
   \begin{columns}[T]
-    \begin{column}{0.5\textwidth}
+    \begin{column}{0.33\textwidth}
       \centering
       \includegraphics[width=0.92\linewidth]{images/part1/plots_comp_bc_diffusion/robustness_vs_noise.png}\\
       {\scriptsize \BC{} degrades more gracefully under observation noise.}
     \end{column}
-    \begin{column}{0.5\textwidth}
+    \begin{column}{0.33\textwidth}
       \centering
       \includegraphics[width=0.92\linewidth]{images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png}\\
       {\scriptsize Committing to $>1$ open-loop action destroys performance.}
     \end{column}
+    \begin{column}{0.33\textwidth}
+      \centering
+      \includegraphics[width=0.92\linewidth]{images/part1/chart.png}\\
+      {\scriptsize BC performs also performs best when open-loop actions are less than 1.}
+    \end{column}
+    
   \end{columns}
   \vfill
   \alert{Design choices are not free parameters:} transformer backbone (MLP collapses to $2\%$) and $n_{\text{exec}}=1$ are the difference between a working and a broken controller.
