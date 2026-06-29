@@ -334,10 +334,11 @@
     \item Source: $\sim$10 human demos per task $\to$ MimicGen auto-generates large datasets ($D_0,D_1,\dots$).
     \item Four datasets used: \texttt{stack\_d0/d1}, \texttt{stack\_three\_d0/d1} — 1000 trajectories each.
     \item HDF5 / robomimic format; only state-relevant keys used (no images).
+    \item A few source expert demonstration were used to generate new and create a complete dataset.
   \end{itemize}
   \begin{block}{Why it matters}
     Demonstrations contain \emph{several valid ways} to finish a stack $\Rightarrow$ a multimodal
-    action distribution — the regime where diffusion is expected to shine.
+    action distribution — the reason where diffusion is expected to perform better.
   \end{block}
 \end{frame}
 
@@ -410,6 +411,11 @@
     \item \BC{} is smoother (lower jitter) but completes fewer stacks — blurs the multiple valid motions.
     \item Both need the long $H{=}8$ horizon; $H{=}1$ breaks temporal coherence.
   \end{itemize}
+\end{frame}
+
+\begin{frame}{Evaluation — cube stacking results}
+  \centering
+  \includegraphics[width=\linewidth,height=0.8\textheight,keepaspectratio]{images/part2/cube_stack_results_figure.png}
 \end{frame}
 
 % ══════════════════════════════════════════════════════════════════════════════
