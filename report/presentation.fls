@@ -1,6 +1,6 @@
 PWD /home/nickv/Documents/School/group_project_TN2/report
 INPUT /home/nickv/.miktex/texmfs/data/miktex/data/le/pdftex/pdflatex.fmt
-INPUT presentation.tex
+INPUT /home/nickv/Documents/School/group_project_TN2/report/presentation.tex
 OUTPUT presentation.log
 INPUT /home/nickv/.miktex/texmfs/install/tex/latex/beamer/beamer.cls
 INPUT /home/nickv/.miktex/texmfs/install/tex/latex/beamer/beamer.cls
@@ -561,8 +561,6 @@ INPUT /home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi6.pf
 INPUT /home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi6.pfb
 INPUT /home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi8.pfb
 INPUT /home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi8.pfb
-INPUT /home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi9.pfb
-INPUT /home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi9.pfb
 INPUT /home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss10.pfb
 INPUT /home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss10.pfb
 INPUT /home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss12.pfb

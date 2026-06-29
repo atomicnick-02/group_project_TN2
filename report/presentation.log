@@ -1,9 +1,10 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.5) (preloaded format=pdflatex 2026.5.10)  29 JUN 2026 12:30
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (MiKTeX 26.5) (preloaded format=pdflatex 2026.5.10)  29 JUN 2026 13:05
 entering extended mode
  restricted \write18 enabled.
+ file:line:error style messages enabled.
  %&-line parsing enabled.
-**./presentation.tex
-(presentation.tex
+**/home/nickv/Documents/School/group_project_TN2/report/presentation.tex
+(/home/nickv/Documents/School/group_project_TN2/report/presentation.tex
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-03-20>
 (/home/nickv/.miktex/texmfs/install/tex/latex/beamer/beamer.cls
@@ -1257,51 +1258,45 @@ art1/chart.png>] [19
 ] [23
 
 ]
-Overfull \vbox (12.5817pt too high) detected at line 392
+LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <10> not available
+(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 389.
+
+LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <7> not available
+(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 389.
+
+LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <5> not available
+(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 389.
+
+LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <10.95> not available
+(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 389.
+
+LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <8> not available
+(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 389.
+
+LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <6> not available
+(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 389.
+
+
+Overfull \vbox (4.53522pt too high) detected at line 389
  []
 
 [24
 
 ]
-LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <10> not available
-(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 414.
-
-LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <7> not available
-(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 414.
-
-LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <5> not available
-(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 414.
-
-LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <10.95> not available
-(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 414.
-
-LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <8> not available
-(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 414.
-
-LaTeX Font Info:    Font shape `OT1/cmss/b/n' in size <6> not available
-(Font)              Font shape `OT1/cmss/bx/n' tried instead on input line 414.
-
-
-Overfull \vbox (4.53522pt too high) detected at line 414
- []
-
-[25
-
-]
-<images/part2/cube_stack_results_figure.png, id=241, 1681.28125pt x 731.73375pt
+<images/part2/cube_stack_results_figure.png, id=233, 1681.28125pt x 731.73375pt
 >
 File: images/part2/cube_stack_results_figure.png Graphic file (type png)
 <use images/part2/cube_stack_results_figure.png>
 Package pdftex.def Info: images/part2/cube_stack_results_figure.png  used on in
-put line 419.
+put line 394.
 (pdftex.def)             Requested size: 398.33359pt x 173.36429pt.
- [26
+ [25
 
- <./images/part2/cube_stack_results_figure.png>] [27
+ <./images/part2/cube_stack_results_figure.png>] [26
+
+] [27
 
 ] [28
-
-] [29
 
 ]
 \tf@nav=\write6
@@ -1323,38 +1318,37 @@ Package rerunfilecheck Info: File `presentation.out' has not changed.
 (rerunfilecheck)             Checksum: B3C2253666BF77589AC739A19FD1877C;635.
  ) 
 Here is how much of TeX's memory you used:
- 27579 strings out of 469603
- 564896 string characters out of 5466555
+ 27575 strings out of 469603
+ 564915 string characters out of 5466555
  962858 words of memory out of 5000000
- 55788 multiletter control sequences out of 15000+600000
+ 55786 multiletter control sequences out of 15000+600000
  644438 words of font info for 100 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
- 128i,14n,123p,1881b,801s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 128i,14n,123p,1933b,797s stack positions out of 10000i,1000n,20000p,200000b,200000s
  </home/nickv/.miktex/texmfs/data/fonts/pk/ljfour/jknappen/ec/dpi600/tcss1095
 .pk></home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmex10.p
 fb></home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi10.pf
 b></home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi6.pfb>
 </home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi8.pfb></
-home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmmi9.pfb></ho
-me/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss10.pfb></hom
-e/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss12.pfb></home
-/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss8.pfb></home/n
-ickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss9.pfb></home/nic
-kv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmssbx10.pfb></home/ni
-ckv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmssi10.pfb></home/ni
-ckv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmssi8.pfb></home/nic
-kv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmssi9.pfb></home/nick
-v/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy10.pfb></home/nickv
-/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy6.pfb></home/nickv/.
-miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy8.pfb></home/nickv/.mi
-ktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy9.pfb></home/nickv/.mikt
-ex/texmfs/install/fonts/type1/public/amsfonts/cm/cmtt10.pfb></home/nickv/.mikte
-x/texmfs/install/fonts/type1/public/amsfonts/cm/cmtt8.pfb></home/nickv/.miktex/
-texmfs/install/fonts/type1/public/amsfonts/cm/cmtt9.pfb></home/nickv/.miktex/te
-xmfs/install/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
-Output written on presentation.pdf (29 pages, 2038397 bytes).
+home/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss10.pfb></h
+ome/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss12.pfb></ho
+me/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss8.pfb></home
+/nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmss9.pfb></home/n
+ickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmssbx10.pfb></home/
+nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmssi10.pfb></home/
+nickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmssi8.pfb></home/n
+ickv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmssi9.pfb></home/ni
+ckv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy10.pfb></home/nic
+kv/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy6.pfb></home/nickv
+/.miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy8.pfb></home/nickv/.
+miktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmsy9.pfb></home/nickv/.mi
+ktex/texmfs/install/fonts/type1/public/amsfonts/cm/cmtt10.pfb></home/nickv/.mik
+tex/texmfs/install/fonts/type1/public/amsfonts/cm/cmtt8.pfb></home/nickv/.mikte
+x/texmfs/install/fonts/type1/public/amsfonts/cm/cmtt9.pfb></home/nickv/.miktex/
+texmfs/install/fonts/type1/public/amsfonts/symbols/msbm10.pfb>
+Output written on presentation.pdf (28 pages, 2025331 bytes).
 PDF statistics:
- 377 PDF objects out of 1000 (max. 8388607)
- 63 named destinations out of 1000 (max. 500000)
+ 366 PDF objects out of 1000 (max. 8388607)
+ 61 named destinations out of 1000 (max. 500000)
  141 words of extra memory for PDF output out of 10000 (max. 10000000)
 

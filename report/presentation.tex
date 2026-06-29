@@ -284,7 +284,7 @@
     \begin{column}{0.33\textwidth}
       \centering
       \includegraphics[width=0.92\linewidth]{images/part1/chart.png}\\
-      {\scriptsize BC performs also performs best when open-loop actions are less than 1.}
+      {\scriptsize BC also performs best when open-loop actions are less than 1.}
     \end{column}
     
   \end{columns}
@@ -365,31 +365,6 @@
   \textbf{Testing:} 50 episodes per model/task, control @ 20\,Hz, horizon 500 steps; success = cubes stacked.
 \end{frame}
 
-\begin{frame}{DDIM sampler — cube stacking}
-  Same $\epsilon_\theta$ trained over $K=100$ noise levels, but sampled with the \alert{deterministic, non-Markovian} DDIM update — letting us \emph{skip} timesteps.
-  \begin{columns}[T]
-    \begin{column}{0.54\textwidth}
-      \textbf{One reverse step} — predict the clean chunk, then re-noise to level $k\!-\!1$:
-      \[
-        \hat a_0=\frac{a_k-\sqrt{1-\bar\alpha_k}\,\epsilon_\theta(a_k,k,s_t)}{\sqrt{\bar\alpha_k}}
-      \]
-      \[
-        a_{k-1}=\sqrt{\bar\alpha_{k-1}}\,\hat a_0+\sqrt{1-\bar\alpha_{k-1}}\,\epsilon_\theta
-      \]
-      {\footnotesize No injected $z$ $\Rightarrow$ the noise$\to$action map is deterministic.}
-    \end{column}
-    \begin{column}{0.46\textwidth}
-      \begin{alertblock}{Why DDIM here}
-        \begin{itemize}
-          \item Sub-sample $100\!\to\!50$ steps: $2\times$ fewer network calls, $\sim$same quality
-          \item Deterministic $\Rightarrow$ reproducible, smoother chunks (one mode per noise seed)
-          \item Still multimodal across seeds — what the long-horizon stack needs
-        \end{itemize}
-      \end{alertblock}
-      {\footnotesize $H{=}8$ receding horizon, EMA $0.995$.}
-    \end{column}
-  \end{columns}
-\end{frame}
 
 \begin{frame}{Evaluation — metrics \& results}
   Metrics per planning step: trajectory \textbf{jitter} $J$, \textbf{path effort} $E$, \textbf{joint cost} $C$; plus \textbf{success rate}.

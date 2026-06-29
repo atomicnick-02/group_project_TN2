@@ -173,7 +173,7 @@ class Scheduler:
         Forward process q(x_t | x_0) = N(sqrt(alpha_bar_t)*x_0, (1-alpha_bar_t)*I).
         x_0: (batch, H, nu), t: (batch,). Returns noisy actions + the noise.
         """
-        epsilon = torch.randn_like(x_0)
+        epsilon = torch.
         # reshape to (batch, 1, 1) so it broadcasts over horizon and action dims
         sqrt_alpha_bar           = torch.sqrt(self.alpha_bar[t]).view(-1, 1, 1)
         sqrt_one_minus_alpha_bar = self.sqrt_one_minus_alpha_bar[t].view(-1, 1, 1)

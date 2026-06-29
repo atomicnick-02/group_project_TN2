@@ -1,4 +1,4 @@
 \beamer@sectionintoc {1}{Introduction}{3}{0}{1}
 \beamer@sectionintoc {2}{Part I — Double-Pendulum Swing-Up}{5}{0}{2}
 \beamer@sectionintoc {3}{Part II — Robotic Cube Stacking}{20}{0}{3}
-\beamer@sectionintoc {4}{Conclusion}{27}{0}{4}
+\beamer@sectionintoc {4}{Conclusion}{26}{0}{4}
