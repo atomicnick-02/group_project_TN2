@@ -538,6 +538,13 @@ INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmssbx10.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmssbx10.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmssbx10.tfm
 INPUT /home/nickv/.miktex/texmfs/install/fonts/tfm/public/cm/cmssbx10.tfm
+INPUT ./images/part2/cube_stack_results_figure.png
+INPUT ./images/part2/cube_stack_results_figure.png
+INPUT ./images/part2/cube_stack_results_figure.png
+INPUT ./images/part2/cube_stack_results_figure.png
+INPUT ./images/part2/cube_stack_results_figure.png
+INPUT ./images/part2/cube_stack_results_figure.png
+INPUT ./images/part2/cube_stack_results_figure.png
 OUTPUT presentation.nav
 OUTPUT presentation.toc
 OUTPUT presentation.snm

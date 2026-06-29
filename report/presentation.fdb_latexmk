@@ -1,5 +1,5 @@
 # Fdb version 4
-["pdflatex"] 1782721313.59563 "presentation.tex" "presentation.pdf" "presentation" 1782721319.50718 0
+["pdflatex"] 1782725424.82414 "presentation.tex" "presentation.pdf" "presentation" 1782725428.07581 0
   "/home/nickv/.miktex/texmfs/data/fonts/map/pdftex/pdftex.map" 1782672785.31909 107575 615e8c0531d45b4aa75dbe5a4b79fc4f ""
   "/home/nickv/.miktex/texmfs/data/fonts/pk/ljfour/jknappen/ec/dpi600/tcss1095.pk" 1782586738.88456 11640 4e8d8e65f1fc0a18156892cc3b6ba641 ""
   "/home/nickv/.miktex/texmfs/data/miktex/data/le/pdftex/pdflatex.fmt" 1778408382.19842 10203374 968133167c13ad42af2ec8e85221e23d ""
@@ -256,11 +256,12 @@
   "images/part1/plots_comp_bc_diffusion/robustness_vs_noise.png" 1782491761.68897 57259 3f0048122f69227d523d179f9e948a05 ""
   "images/part1/plots_compare_diffusion_exec_steps/nexec_sweep_success_rate.png" 1782495801.53464 52336 4ed5752f7f8aea88865798fe5af365a3 ""
   "images/part1/training_bc.png" 1782493979 32902 8d0f6cce76f08c0e8e84217b73eaa43e ""
-  "presentation.aux" 1782721319.24316 5443 d5d1d429029d4bba1c3c0f875eda516d "pdflatex"
-  "presentation.nav" 1782721319.24649 3488 dfca1ab53353489ab658f3c65036d1f1 "pdflatex"
-  "presentation.out" 1782721319.24649 635 b3c2253666bf77589ac739a19fd1877c "pdflatex"
-  "presentation.tex" 1782721283.84043 20461 060de59f42056b35b5154adad022b216 ""
-  "presentation.toc" 1782721319.24649 236 6aac1dad0b6ee8f298808fd4689d1815 "pdflatex"
+  "images/part2/cube_stack_results_figure.png" 1782725278.2662 325025 3b445196f756c574ecb25c49eaa625f4 ""
+  "presentation.aux" 1782725427.82255 5571 b5b4aa0fd56d9ca94ab72f1c8ee2f148 "pdflatex"
+  "presentation.nav" 1782725427.82715 3580 b199d3bb6c6ffe75de11030882a7a4ec "pdflatex"
+  "presentation.out" 1782725427.82255 635 b3c2253666bf77589ac739a19fd1877c "pdflatex"
+  "presentation.tex" 1782725410.31097 20765 01728b3311f681aa7c8aa1cc0f331fdd ""
+  "presentation.toc" 1782725427.82715 236 d35d2cad5530926ab31e52f7875e1faa "pdflatex"
   (generated)
   "presentation.aux"
   "presentation.log"
