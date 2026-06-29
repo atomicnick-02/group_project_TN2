@@ -140,6 +140,35 @@
   {\footnotesize Formulation follows \emph{Understanding Deep Learning} (Prince, 2023).}
 \end{frame}
 
+\begin{frame}{2. DDPM sampler — double pendulum}
+  Sample an action chunk by \alert{ancestral denoising} (DDPM): start from pure noise $a_T\!\sim\!\mathcal{N}(0,I)$ and iterate $t:T\!\to\!1$ with $T=20$.
+  \begin{columns}[T]
+    \begin{column}{0.56\textwidth}
+      \textbf{One reverse step}
+      \[
+        a_{t-1}=\tfrac{1}{\sqrt{1-\beta_t}}\!\Big(a_t-\tfrac{\beta_t}{\sqrt{1-\bar\alpha_t}}\,\epsilon_\theta(a_t,t,c)\Big)+\sqrt{\beta_t}\,z
+      \]
+      \begin{itemize}
+        \item Linear $\beta$-schedule ($10^{-4}\!\to\!0.02$), EMA $0.999$
+        \item \emph{Markovian}: every step removes a little noise, re-adds a little ($z\!\sim\!\mathcal{N}(0,I)$)
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.44\textwidth}
+      \begin{alertblock}{Control tweak: drop $z$}
+        Set ancestral noise $z=0\Rightarrow$ posterior mean each step. Low action variance is what lets it \emph{hold} the unstable upright — stray torque noise topples the pendulum.
+      \end{alertblock}
+      {\footnotesize All $T=20$ steps run every re-plan ($n_{\text{exec}}{=}1$).}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{2. DDPM in action — noising \& denoising a chunk}
+  \centering
+  \includegraphics[width=\linewidth,height=0.74\textheight,keepaspectratio]%
+    {images/part1/noising_denoising_overlay.png}\\
+  {\scriptsize One mid-rollout expert chunk ($H{=}10$, two torques $u_1,u_2$). \textbf{Top:} forward process buries the expert (dashed) in noise; \textbf{bottom:} the deterministic reverse process recovers it almost exactly (cyan $\approx$ dashed, reconstruction MSE $\sim\!10^{-6}$).}
+\end{frame}
+
 \begin{frame}{3. Generating the expert dataset}
   Classical optimal-control pipeline — every sample dynamically valid by construction.
   \begin{enumerate}
@@ -333,6 +362,32 @@
   \end{columns}
   \vfill
   \textbf{Testing:} 50 episodes per model/task, control @ 20\,Hz, horizon 500 steps; success = cubes stacked.
+\end{frame}
+
+\begin{frame}{DDIM sampler — cube stacking}
+  Same $\epsilon_\theta$ trained over $K=100$ noise levels, but sampled with the \alert{deterministic, non-Markovian} DDIM update — letting us \emph{skip} timesteps.
+  \begin{columns}[T]
+    \begin{column}{0.54\textwidth}
+      \textbf{One reverse step} — predict the clean chunk, then re-noise to level $k\!-\!1$:
+      \[
+        \hat a_0=\frac{a_k-\sqrt{1-\bar\alpha_k}\,\epsilon_\theta(a_k,k,s_t)}{\sqrt{\bar\alpha_k}}
+      \]
+      \[
+        a_{k-1}=\sqrt{\bar\alpha_{k-1}}\,\hat a_0+\sqrt{1-\bar\alpha_{k-1}}\,\epsilon_\theta
+      \]
+      {\footnotesize No injected $z$ $\Rightarrow$ the noise$\to$action map is deterministic.}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{alertblock}{Why DDIM here}
+        \begin{itemize}
+          \item Sub-sample $100\!\to\!50$ steps: $2\times$ fewer network calls, $\sim$same quality
+          \item Deterministic $\Rightarrow$ reproducible, smoother chunks (one mode per noise seed)
+          \item Still multimodal across seeds — what the long-horizon stack needs
+        \end{itemize}
+      \end{alertblock}
+      {\footnotesize $H{=}8$ receding horizon, EMA $0.995$.}
+    \end{column}
+  \end{columns}
 \end{frame}
 
 \begin{frame}{Evaluation — metrics \& results}
